@@ -414,8 +414,8 @@ export default function App() {
       <div className="bg-white shadow-sm sticky top-0 z-40">
         <div className="p-4 flex justify-between items-center max-w-4xl mx-auto">
           <div>
-            <h1 className="text-xl font-bold text-pink-700 leading-tight">Zoddle POS</h1>
-            <p className="text-xs text-gray-500">Secure Mobile Edition</p>
+            <h1 className="text-xl font-bold text-pink-700 leading-tight">Zoddle</h1>
+            <p className="text-xs text-gray-500">Secure Order Recording System</p>
           </div>
           <div className="flex items-center gap-3">
             {isOnline ? <Wifi className="text-green-500 w-5 h-5" /> : <WifiOff className="text-red-500 w-5 h-5" />}
@@ -611,7 +611,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Checkout Summary Modal */}
+      {/* Checkout Summary Modal with Invoice View */}
       {showSummary && (
         <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center">
           <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
@@ -619,21 +619,68 @@ export default function App() {
               <h2 className="text-lg font-bold">Review Order</h2>
               <button onClick={() => setShowSummary(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><X className="w-5 h-5"/></button>
             </div>
+            
             <div className="overflow-y-auto p-6 space-y-6 flex-1">
+              
+              {/* Highlighted Net Payable Amount */}
               <div className="text-center space-y-1">
-                <p className="text-sm text-gray-500">Order Amount</p><p className="text-4xl font-black text-pink-600">₹{totals.net.toFixed(2)}</p><p className="text-xs font-mono text-gray-400">{orderId}</p>
+                <p className="text-sm text-gray-500">Total Payable Amount</p>
+                <p className="text-4xl font-black text-pink-600">₹{totals.net.toFixed(2)}</p>
+                <p className="text-xs font-mono text-gray-400">{orderId}</p>
               </div>
+              
+              {/* Customer Header Info */}
               <div className="bg-gray-50 p-4 rounded-2xl text-sm space-y-2">
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-bold">{customer.name}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Phone</span><span className="font-bold">{customer.phone || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Executive</span><span className="font-bold">{customer.executive}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Items</span><span className="font-bold">{totals.totalUnits} Units</span></div>
               </div>
-              <div className="flex flex-col items-center p-6 border-2 border-dashed border-pink-100 bg-pink-50/50 rounded-3xl">
-                <QrCode className="w-8 h-8 text-pink-400 mb-2"/>
-                <p className="text-xs font-bold text-pink-700 uppercase tracking-wider mb-4">Scan to Pay</p>
+
+              {/* Invoice Breakdown Table */}
+              <div className="border border-gray-100 rounded-xl overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="p-2 text-left font-medium">Item</th>
+                      <th className="p-2 text-right font-medium">Price</th>
+                      <th className="p-2 text-right font-medium">Qty</th>
+                      <th className="p-2 text-right font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {cart.map((item, idx) => (
+                      <tr key={idx}>
+                        <td className="p-2 font-mono font-medium">{item.sku}</td>
+                        <td className="p-2 text-right">₹{item.zrp}</td>
+                        <td className="p-2 text-right">{item.units}</td>
+                        <td className="p-2 text-right font-bold">₹{(item.zrp * item.units).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                {/* Aggregate Breakdown inside the table card */}
+                <div className="p-3 bg-gray-50 space-y-1 border-t border-gray-100">
+                  <div className="flex justify-between text-gray-500">
+                    <span>Gross Subtotal ({totals.totalUnits} Units):</span> 
+                    <span>₹{totals.gross.toFixed(2)}</span>
+                  </div>
+                  {totals.discount > 0 && (
+                    <div className="flex justify-between text-green-600 font-medium">
+                      <span>Discount ({customer.discountCode}):</span> 
+                      <span>-₹{totals.discount.toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* QR Code */}
+              <div className="flex flex-col items-center p-4 border-2 border-dashed border-pink-100 bg-pink-50/50 rounded-2xl">
+                <p className="text-xs font-bold text-pink-700 uppercase tracking-wider mb-2">Scan to Pay</p>
                 <img src="https://cdn.shopify.com/s/files/1/0924/1041/3419/files/Zoddle_-_QR_Code.png?v=1771588559" alt="UPI QR" className="w-40 h-40 rounded-xl shadow-sm mix-blend-multiply" />
               </div>
             </div>
+            
             <div className="p-4 border-t bg-white">
               <button onClick={submitOrder} disabled={isSaving} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold p-4 rounded-xl shadow-lg shadow-green-200 text-lg flex justify-center items-center gap-2">
                 {isSaving ? 'Saving...' : (isOnline ? 'Confirm & Save' : 'Save Offline')}
