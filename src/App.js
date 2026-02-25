@@ -102,7 +102,7 @@ export default function App() {
   const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
 
   // Current Item Form State
-  const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-3M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
+  const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
   const [isSkuLocked, setIsSkuLocked] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -209,7 +209,7 @@ export default function App() {
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
     if (!sku) {
-      setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-3M', gender: '', mrp: '', zrp: '', photoData: null }));
+      setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null }));
       setIsSkuLocked(false);
       return;
     }
@@ -217,7 +217,7 @@ export default function App() {
     const match = inventory.find(i => i.sku?.toString().toUpperCase() === sku);
     if (match) {
       setItemForm(prev => ({
-        ...prev, sku, brand: match.brand || '', size: match.size || '0-3M', gender: match.gender || '', mrp: match.mrp || '', zrp: match.zrp || '', photoData: null
+        ...prev, sku, brand: match.brand || '', size: match.size || '0-1M', gender: match.gender || '', mrp: match.mrp || '', zrp: match.zrp || '', photoData: null
       }));
       setIsSkuLocked(true);
     } else {
@@ -238,8 +238,14 @@ export default function App() {
 
   const addToCart = () => {
     if (!itemForm.sku || !itemForm.zrp) return alert("SKU and ZRP are required.");
+    
+    // Mandatory photo check for new entries
+    if (!isSkuLocked && !itemForm.photoData) {
+      return alert("A photo is mandatory for new product entries.");
+    }
+
     setCart([...cart, { ...itemForm, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
-    setItemForm({ sku: '', brand: '', size: '0-3M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
+    setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
     setIsSkuLocked(false);
   };
 
@@ -249,24 +255,66 @@ export default function App() {
     const gross = cart.reduce((sum, item) => sum + (item.zrp * item.units), 0);
     const totalUnits = cart.reduce((sum, item) => sum + item.units, 0);
     let discount = 0;
+    let workingText = "";
     const code = customer.discountCode.trim().toUpperCase();
 
-    if (code === 'ZODDLE') discount = gross * (totalUnits > 3 ? 0.20 : 0.10);
-    else if (code === 'ZOD30') discount = gross * 0.30;
-    else if (code === 'ZOD200') discount = 200 + (totalUnits >= 4 ? (gross - 200) * 0.10 : 0);
-    else if (code === 'B2G1') {
+    if (code === 'ZODDLE') {
+      let pct = 0.10;
+      let logicText = "Total units ≤ 3 (10% off)";
+      
+      if (totalUnits >= 8) {
+        pct = 0.30;
+        logicText = "Total units ≥ 8 (30% off)";
+      } else if (totalUnits > 3) {
+        pct = 0.20;
+        logicText = "Total units 4-7 (20% off)";
+      }
+      
+      discount = gross * pct;
+      workingText = `• Code ZODDLE applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZOD30') {
+      discount = gross * 0.30;
+      workingText = `• Code ZOD30 applied.\n• Logic: Flat 30% discount on cart.\n• Calculation: ₹${gross.toFixed(2)} × 30% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZOD200') {
+      let baseDisc = 200;
+      let extraDisc = 0;
+      workingText = `• Code ZOD200 applied.\n• Base Discount: ₹200 flat off.`;
+      if (totalUnits >= 4) {
+          extraDisc = (gross - baseDisc) * 0.10;
+          workingText += `\n• Extra Discount: Cart has 4+ items. Additional 10% off remaining total.\n• Calculation: (₹${gross.toFixed(2)} - ₹200) × 10% = ₹${extraDisc.toFixed(2)}`;
+      }
+      discount = baseDisc + extraDisc;
+      workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
+    } else if (code === 'B2G1') {
       let flatList = [];
       cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
       flatList.sort((a, b) => b - a);
       if (flatList.length >= 3) {
-        discount += flatList[2];
-        if (flatList.length >= 4) discount += flatList.slice(3).reduce((a, b) => a + (b * 0.10), 0);
+        const freeItem = flatList[2];
+        discount += freeItem;
+        workingText = `• Code B2G1 applied.\n• Logic: Buy 2 Get 1 Free (cheapest of top 3 is free).\n• Free Item Value: ₹${freeItem.toFixed(2)}`;
+        if (flatList.length >= 4) {
+          let addl = flatList.slice(3).reduce((a, b) => a + (b * 0.10), 0);
+          discount += addl;
+          workingText += `\n• Logic: 10% flat discount on 4th item onwards.\n• Calculation: Remaining ₹${(flatList.slice(3).reduce((a,b)=>a+b,0)).toFixed(2)} × 10% = ₹${addl.toFixed(2)}`;
+        }
+      } else {
+        workingText = `• Code B2G1: Minimum 3 items required in cart.`;
       }
-    } else if (code === 'ZOD500' && gross > 1000) {
-      discount = Math.min(500 + (Math.floor((gross - 1000) / 1000) * 200), 2000);
+    } else if (code === 'ZOD500') {
+      if (gross > 1000) {
+        discount = 500 + (Math.floor((gross - 1000) / 1000) * 200);
+        discount = Math.min(discount, 2000);
+        workingText = `• Code ZOD500 applied.\n• Logic: ₹500 off base (>₹1000) + ₹200 per subsequent full ₹1000 (Max ₹2000).\n• Calculation Total: ₹${discount.toFixed(2)}`;
+      } else {
+        workingText = `• Code ZOD500: Gross total must be above ₹1000.`;
+      }
+    } else if (code) {
+       workingText = `• Discount code entered but not recognized or applicable.`;
     }
+
     discount = Math.min(discount, gross);
-    return { gross, discount, totalUnits, net: gross - discount };
+    return { gross, discount, totalUnits, net: gross - discount, workingText };
   };
 
   const totals = calculateTotals();
@@ -442,7 +490,20 @@ export default function App() {
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
                 <select value={itemForm.size} disabled={isSkuLocked} onChange={e => setItemForm({...itemForm, size: e.target.value})} className={`w-full rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100 text-gray-500' : 'bg-gray-50 focus:ring-2 focus:ring-pink-200'}`}>
-                    <option value="0-1M">0-1M</option><option value="0-3M">0-3M</option><option value="3-6M">3-6M</option><option value="6-12M">6-12M</option><option value="1-2Y">1-2Y</option><option value="2-3Y">2-3Y</option><option value="3-4Y">3-4Y</option><option value="4-5Y">4-5Y</option>
+                    <option value="0-1M">Newborn (0-1M)</option>
+                    <option value="1-3M">1-3M</option>
+                    <option value="3-6M">3-6M</option>
+                    <option value="6-12M">6-12M</option>
+                    <option value="12-18M">12-18M</option>
+                    <option value="18-24M">18-24M</option>
+                    <option value="2-3Y">2-3Y</option>
+                    <option value="3-4Y">3-4Y</option>
+                    <option value="4-5Y">4-5Y</option>
+                    <option value="5-6Y">5-6Y</option>
+                    <option value="6-7Y">6-7Y</option>
+                    <option value="7-8Y">7-8Y</option>
+                    <option value="8-9Y">8-9Y</option>
+                    <option value="9-10Y">9-10Y</option>
                 </select>
               </div>
             </div>
@@ -511,12 +572,22 @@ export default function App() {
               ))}
             </div>
 
-            <div className="p-4 bg-pink-50/50 space-y-2 border-t border-gray-100">
+            {/* Discount Working Display */}
+            {totals.workingText && (
+              <div className="p-4 bg-pink-50/50 border-t border-dashed border-pink-200">
+                <h3 className="text-[10px] font-bold text-pink-700 uppercase mb-2">Discount Calculation Working</h3>
+                <p className="text-xs text-gray-700 whitespace-pre-line leading-relaxed">
+                  {totals.workingText}
+                </p>
+              </div>
+            )}
+
+            <div className="p-4 bg-white space-y-2 border-t border-gray-100">
               <div className="flex justify-between text-sm text-gray-600"><span>Gross Total</span><span>₹{totals.gross.toFixed(2)}</span></div>
               {totals.discount > 0 && (
                 <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
               )}
-              <div className="flex justify-between items-center pt-2 border-t border-pink-100">
+              <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                 <span className="font-bold text-gray-800">Final Total</span><span className="text-2xl font-black text-pink-600">₹{totals.net.toFixed(2)}</span>
               </div>
             </div>
