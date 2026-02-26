@@ -414,8 +414,8 @@ export default function App() {
       <div className="bg-white shadow-sm sticky top-0 z-40">
         <div className="p-4 flex justify-between items-center max-w-4xl mx-auto">
           <div>
-            <h1 className="text-xl font-bold text-pink-700 leading-tight">Zoddle</h1>
-            <p className="text-xs text-gray-500">Secure Order Recording System</p>
+            <h1 className="text-xl font-bold text-pink-700 leading-tight">Zoddle POS</h1>
+            <p className="text-xs text-gray-500">Secure Mobile Edition</p>
           </div>
           <div className="flex items-center gap-3">
             {isOnline ? <Wifi className="text-green-500 w-5 h-5" /> : <WifiOff className="text-red-500 w-5 h-5" />}
