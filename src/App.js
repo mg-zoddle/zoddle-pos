@@ -18,8 +18,7 @@ const FileText = ({className}) => <Icon className={className}><path d="M14.5 2H6
 const Lock = ({className}) => <Icon className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
 const ShieldCheck = ({className}) => <Icon className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></Icon>;
 
-
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx6uDkPFPEBGmwQ8LC7HsPnvGHbcIqFCiYBbh9r-o8W8I2fLVkBGFNkf_VXs05ADXVF/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxRVsOUhFXKy2NnbSGRy9gyte76dq81SquBRkREGOhMJztzklQBvuvk558mqFpsVBfCQQ/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -39,7 +38,6 @@ const getUniformTimestamp = () => {
 const generateOrderId = () => `ZORD-${Date.now().toString(36).toUpperCase()}`;
 
 // --- ENCRYPTION HELPERS ---
-// Simple but effective XOR + Base64 encryption to protect local storage PII
 const encryptData = (data, key) => {
   const text = JSON.stringify(data);
   let result = '';
@@ -58,7 +56,7 @@ const decryptData = (b64, key) => {
     }
     return JSON.parse(result);
   } catch (e) {
-    return null; // Failed to decrypt or invalid data
+    return null;
   }
 };
 
@@ -100,6 +98,7 @@ export default function App() {
   // Order Header State
   const [orderId, setOrderId] = useState(generateOrderId());
   const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
+  const [paymentMethod, setPaymentMethod] = useState('Online'); // Default payment method
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
@@ -112,14 +111,12 @@ export default function App() {
 
   // --- Network & PWA Listeners ---
   useEffect(() => {
-    // 1. Register Service Worker for true offline booting
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js')
         .then(registration => console.log('Service Worker registered with scope:', registration.scope))
         .catch(error => console.log('Service Worker registration failed:', error));
     }
 
-    // 2. Online/Offline state listeners
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
@@ -154,7 +151,6 @@ export default function App() {
     }
   };
 
-  // Save to secure local storage whenever queue changes
   useEffect(() => {
     if (isAuthenticated) {
       localStorage.setItem('zoddle_secure_queue', encryptData(syncQueue, APP_PIN));
@@ -167,7 +163,7 @@ export default function App() {
       const response = await fetch(API_ENDPOINT);
       const data = await response.json();
       setInventory(data);
-      localStorage.setItem('zoddle_inventory', JSON.stringify(data)); // Inventory is non-PII, safe to keep unencrypted for faster offline load
+      localStorage.setItem('zoddle_inventory', JSON.stringify(data));
       setStatus({ type: 'success', text: 'Inventory Synced' });
     } catch (e) {
       const cached = localStorage.getItem('zoddle_inventory');
@@ -239,7 +235,6 @@ export default function App() {
   const addToCart = () => {
     if (!itemForm.sku || !itemForm.zrp) return alert("SKU and ZRP are required.");
     
-    // Mandatory photo check for new entries
     if (!isSkuLocked && !itemForm.photoData) {
       return alert("A photo is mandatory for new product entries.");
     }
@@ -334,6 +329,7 @@ export default function App() {
       totalAmount: totals.net,
       discountCode: customer.discountCode.trim().toUpperCase() || "NONE",
       discountAmount: totals.discount,
+      paymentMethod: paymentMethod, // Now capturing Cash vs Online
       lineItems: cart
     };
 
@@ -366,6 +362,7 @@ export default function App() {
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
     setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
+    setPaymentMethod('Online'); // Reset payment method to default
     setShowSummary(false); setIsSaving(false);
     setTimeout(() => { fetchInventory(); }, 2000);
   };
@@ -527,9 +524,10 @@ export default function App() {
 
             {!isSkuLocked && itemForm.sku && (
               <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300">
-                <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handlePhotoUpload} className="hidden" />
+                {/* Note: Removed capture="environment" so mobile prompts for Camera OR Gallery */}
+                <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoUpload} className="hidden" />
                 <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 flex-1 bg-white border border-gray-200 p-2 rounded-lg text-sm text-gray-600 font-medium">
-                  <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo'}
+                  <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo/Gallery'}
                 </button>
                 {itemForm.photoData && <img src={itemForm.photoData} alt="Preview" className="w-10 h-10 object-cover rounded border border-gray-200" />}
               </div>
@@ -629,11 +627,30 @@ export default function App() {
                 <p className="text-xs font-mono text-gray-400">{orderId}</p>
               </div>
               
-              {/* Customer Header Info */}
-              <div className="bg-gray-50 p-4 rounded-2xl text-sm space-y-2">
+              {/* Customer Header Info & Payment Method */}
+              <div className="bg-gray-50 p-4 rounded-2xl text-sm space-y-3">
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-bold">{customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Phone</span><span className="font-bold">{customer.phone || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Executive</span><span className="font-bold">{customer.executive}</span></div>
+                
+                {/* NEW: Payment Method Toggle */}
+                <div className="pt-3 border-t border-gray-200">
+                  <p className="text-xs text-gray-500 mb-2 uppercase font-bold tracking-wider">Select Payment Method</p>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setPaymentMethod('Online')} 
+                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Online' ? 'bg-pink-600 text-white shadow-md shadow-pink-200' : 'bg-white border border-gray-200 text-gray-600'}`}
+                    >
+                      UPI / Online
+                    </button>
+                    <button 
+                      onClick={() => setPaymentMethod('Cash')} 
+                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Cash' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-white border border-gray-200 text-gray-600'}`}
+                    >
+                      Cash
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Invoice Breakdown Table */}
@@ -674,15 +691,17 @@ export default function App() {
                 </div>
               </div>
 
-              {/* QR Code */}
-              <div className="flex flex-col items-center p-4 border-2 border-dashed border-pink-100 bg-pink-50/50 rounded-2xl">
-                <p className="text-xs font-bold text-pink-700 uppercase tracking-wider mb-2">Scan to Pay</p>
-                <img src="https://cdn.shopify.com/s/files/1/0924/1041/3419/files/Zoddle_-_QR_Code.png?v=1771588559" alt="UPI QR" className="w-40 h-40 rounded-xl shadow-sm mix-blend-multiply" />
-              </div>
+              {/* Conditionally Show QR Code only if Online is selected */}
+              {paymentMethod === 'Online' && (
+                <div className="flex flex-col items-center p-4 border-2 border-dashed border-pink-100 bg-pink-50/50 rounded-2xl animate-in fade-in zoom-in duration-300">
+                  <p className="text-xs font-bold text-pink-700 uppercase tracking-wider mb-2">Scan to Pay</p>
+                  <img src="https://cdn.shopify.com/s/files/1/0924/1041/3419/files/Zoddle_-_QR_Code.png?v=1771588559" alt="UPI QR" className="w-40 h-40 rounded-xl shadow-sm mix-blend-multiply" />
+                </div>
+              )}
             </div>
             
             <div className="p-4 border-t bg-white">
-              <button onClick={submitOrder} disabled={isSaving} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold p-4 rounded-xl shadow-lg shadow-green-200 text-lg flex justify-center items-center gap-2">
+              <button onClick={submitOrder} disabled={isSaving} className={`w-full text-white font-bold p-4 rounded-xl shadow-lg text-lg flex justify-center items-center gap-2 ${paymentMethod === 'Cash' ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-pink-600 hover:bg-pink-700 shadow-pink-200'}`}>
                 {isSaving ? 'Saving...' : (isOnline ? 'Confirm & Save' : 'Save Offline')}
               </button>
             </div>
