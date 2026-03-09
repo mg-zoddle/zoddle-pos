@@ -18,7 +18,7 @@ const FileText = ({className}) => <Icon className={className}><path d="M14.5 2H6
 const Lock = ({className}) => <Icon className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
 const ShieldCheck = ({className}) => <Icon className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxRVsOUhFXKy2NnbSGRy9gyte76dq81SquBRkREGOhMJztzklQBvuvk558mqFpsVBfCQQ/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyQfKGsuz8dQ9w7qpkLbMFRj37QRMe5msoXsvMj9FdHYICGUUyi20Wuq1MmYPNVaGjv1w/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -103,6 +103,7 @@ export default function App() {
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
   const [isSkuLocked, setIsSkuLocked] = useState(false);
+  const [formError, setFormError] = useState("");
   const fileInputRef = useRef(null);
 
   // Cart State
@@ -204,6 +205,7 @@ export default function App() {
   // --- Form Handlers ---
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
+    setFormError(""); // Clear any previous errors
     if (!sku) {
       setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null }));
       setIsSkuLocked(false);
@@ -230,15 +232,21 @@ export default function App() {
     if (!file) return;
     const compressedBase64 = await compressImage(file);
     setItemForm(prev => ({ ...prev, photoData: compressedBase64 }));
+    setFormError(""); // Clear error when a photo is added
   };
 
   const addToCart = () => {
-    if (!itemForm.sku || !itemForm.zrp) return alert("SKU and ZRP are required.");
+    if (!itemForm.sku || !itemForm.zrp) {
+      setFormError("SKU and ZRP Price are required.");
+      return;
+    }
     
     if (!isSkuLocked && !itemForm.photoData) {
-      return alert("A photo is mandatory for new product entries.");
+      setFormError("📸 A photo is mandatory for new product entries.");
+      return;
     }
 
+    setFormError(""); // Clear error on successful add
     setCart([...cart, { ...itemForm, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
     setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
     setIsSkuLocked(false);
@@ -296,6 +304,33 @@ export default function App() {
       } else {
         workingText = `• Code B2G1: Minimum 3 items required in cart.`;
       }
+    } else if (code === 'B3G1') {
+      let flatList = [];
+      cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
+      flatList.sort((a, b) => b - a);
+      if (flatList.length >= 4) {
+        // 4th highest item charged at 1 rs
+        const discountedItemValue = flatList[3] - 1; 
+        discount += discountedItemValue;
+        workingText = `• Code B3G1 applied.\n• Logic: Buy 3 Get 1 at ₹1 (4th highest is ₹1).\n• 4th Item Discount: ₹${discountedItemValue.toFixed(2)}`;
+        if (flatList.length >= 5) {
+          let addl = flatList.slice(4).reduce((a, b) => a + (b * 0.10), 0);
+          discount += addl;
+          workingText += `\n• Logic: 10% flat discount on 5th item onwards.\n• Calculation: Remaining ₹${(flatList.slice(4).reduce((a,b)=>a+b,0)).toFixed(2)} × 10% = ₹${addl.toFixed(2)}`;
+        }
+      } else {
+        discount = gross * 0.10;
+        workingText = `• Code B3G1 applied.\n• Logic: Fewer than 4 items. Flat 10% discount applied.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
+      }
+    } else if (code === 'ZODREPEAT') {
+      let pct = 0.20;
+      let logicText = "Total units ≤ 3 (20% off)";
+      if (totalUnits >= 4) {
+        pct = 0.30;
+        logicText = "Total units ≥ 4 (30% off)";
+      }
+      discount = gross * pct;
+      workingText = `• Code ZODREPEAT applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
     } else if (code === 'ZOD500') {
       if (gross > 1000) {
         discount = 500 + (Math.floor((gross - 1000) / 1000) * 200);
@@ -530,6 +565,12 @@ export default function App() {
                   <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo/Gallery'}
                 </button>
                 {itemForm.photoData && <img src={itemForm.photoData} alt="Preview" className="w-10 h-10 object-cover rounded border border-gray-200" />}
+              </div>
+            )}
+
+            {formError && (
+              <div className="bg-red-50 text-red-600 p-3 rounded-xl text-xs font-bold text-center border border-red-200 animate-in fade-in zoom-in duration-300">
+                {formError}
               </div>
             )}
 
