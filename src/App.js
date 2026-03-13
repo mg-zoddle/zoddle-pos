@@ -331,6 +331,15 @@ export default function App() {
       }
       discount = gross * pct;
       workingText = `• Code ZODREPEAT applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'REFZOD') {
+      let pct = 0.15;
+      let logicText = "Total units ≤ 3 (15% off)";
+      if (totalUnits >= 4) {
+        pct = 0.25;
+        logicText = "Total units ≥ 4 (25% off)";
+      }
+      discount = gross * pct;
+      workingText = `• Code REFZOD applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
     } else if (code === 'ZOD500') {
       if (gross > 1000) {
         discount = 500 + (Math.floor((gross - 1000) / 1000) * 200);
