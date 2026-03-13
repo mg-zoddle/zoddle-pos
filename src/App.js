@@ -18,7 +18,7 @@ const FileText = ({className}) => <Icon className={className}><path d="M14.5 2H6
 const Lock = ({className}) => <Icon className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
 const ShieldCheck = ({className}) => <Icon className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyQfKGsuz8dQ9w7qpkLbMFRj37QRMe5msoXsvMj9FdHYICGUUyi20Wuq1MmYPNVaGjv1w/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycby2YFoJxux6_DbSVQqK5Nw4m69p-XiK6T7OJGFwciUeph9QqbleB_pXohCHSMYv2I9C/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -91,6 +91,7 @@ export default function App() {
   // --- App State ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [inventory, setInventory] = useState([]);
+  const [discountMap, setDiscountMap] = useState({}); // Stores Custom Code -> Base Code mappings
   const [syncQueue, setSyncQueue] = useState([]);
   const [status, setStatus] = useState({ type: 'info', text: 'Initializing...' });
   const [isSaving, setIsSaving] = useState(false);
@@ -163,16 +164,29 @@ export default function App() {
       if (!navigator.onLine) throw new Error("Offline");
       const response = await fetch(API_ENDPOINT);
       const data = await response.json();
-      setInventory(data);
-      localStorage.setItem('zoddle_inventory', JSON.stringify(data));
-      setStatus({ type: 'success', text: 'Inventory Synced' });
-    } catch (e) {
-      const cached = localStorage.getItem('zoddle_inventory');
-      if (cached) {
-        setInventory(JSON.parse(cached));
-        setStatus({ type: 'warning', text: 'Offline Mode: Using cached inventory' });
+      
+      // Handle the new nested structure (inventory + discountMap)
+      if (data && data.inventory) {
+        setInventory(data.inventory);
+        setDiscountMap(data.discountMap || {});
+        localStorage.setItem('zoddle_inventory', JSON.stringify(data.inventory));
+        localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
       } else {
-        setStatus({ type: 'error', text: 'Offline Mode: No inventory cached' });
+        // Fallback if backend hasn't updated yet
+        setInventory(data);
+        localStorage.setItem('zoddle_inventory', JSON.stringify(data));
+      }
+
+      setStatus({ type: 'success', text: 'Data Synced' });
+    } catch (e) {
+      const cachedInv = localStorage.getItem('zoddle_inventory');
+      const cachedMap = localStorage.getItem('zoddle_discount_map');
+      if (cachedInv) {
+        setInventory(JSON.parse(cachedInv));
+        if (cachedMap) setDiscountMap(JSON.parse(cachedMap));
+        setStatus({ type: 'warning', text: 'Offline Mode: Using cached data' });
+      } else {
+        setStatus({ type: 'error', text: 'Offline Mode: No data cached' });
       }
     }
   };
@@ -259,7 +273,21 @@ export default function App() {
     const totalUnits = cart.reduce((sum, item) => sum + item.units, 0);
     let discount = 0;
     let workingText = "";
-    const code = customer.discountCode.trim().toUpperCase();
+    
+    const enteredCode = customer.discountCode.trim().toUpperCase();
+    let code = ""; // Default to empty string instead of entered code
+    let mapNote = "";
+
+    // DYNAMIC MAPPING ONLY: Only mapped and active codes are allowed.
+    // Base codes are no longer accepted directly unless they are explicitly mapped.
+    if (enteredCode) {
+      if (discountMap[enteredCode]) {
+        code = discountMap[enteredCode];
+        mapNote = ` (Mapped to base code: ${code})`;
+      } else {
+        code = "INVALID"; // Invalidates unmapped codes or inactive codes
+      }
+    }
 
     if (code === 'ZODDLE') {
       let pct = 0.10;
@@ -274,14 +302,14 @@ export default function App() {
       }
       
       discount = gross * pct;
-      workingText = `• Code ZODDLE applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
     } else if (code === 'ZOD30') {
       discount = gross * 0.30;
-      workingText = `• Code ZOD30 applied.\n• Logic: Flat 30% discount on cart.\n• Calculation: ₹${gross.toFixed(2)} × 30% = ₹${discount.toFixed(2)}`;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 30% discount on cart.\n• Calculation: ₹${gross.toFixed(2)} × 30% = ₹${discount.toFixed(2)}`;
     } else if (code === 'ZOD200') {
       let baseDisc = 200;
       let extraDisc = 0;
-      workingText = `• Code ZOD200 applied.\n• Base Discount: ₹200 flat off.`;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Base Discount: ₹200 flat off.`;
       if (totalUnits >= 4) {
           extraDisc = (gross - baseDisc) * 0.10;
           workingText += `\n• Extra Discount: Cart has 4+ items. Additional 10% off remaining total.\n• Calculation: (₹${gross.toFixed(2)} - ₹200) × 10% = ₹${extraDisc.toFixed(2)}`;
@@ -295,24 +323,23 @@ export default function App() {
       if (flatList.length >= 3) {
         const freeItem = flatList[2];
         discount += freeItem;
-        workingText = `• Code B2G1 applied.\n• Logic: Buy 2 Get 1 Free (cheapest of top 3 is free).\n• Free Item Value: ₹${freeItem.toFixed(2)}`;
+        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Buy 2 Get 1 Free (cheapest of top 3 is free).\n• Free Item Value: ₹${freeItem.toFixed(2)}`;
         if (flatList.length >= 4) {
           let addl = flatList.slice(3).reduce((a, b) => a + (b * 0.10), 0);
           discount += addl;
           workingText += `\n• Logic: 10% flat discount on 4th item onwards.\n• Calculation: Remaining ₹${(flatList.slice(3).reduce((a,b)=>a+b,0)).toFixed(2)} × 10% = ₹${addl.toFixed(2)}`;
         }
       } else {
-        workingText = `• Code B2G1: Minimum 3 items required in cart.`;
+        workingText = `• Code ${enteredCode}${mapNote}: Minimum 3 items required in cart.`;
       }
     } else if (code === 'B3G1') {
       let flatList = [];
       cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
       flatList.sort((a, b) => b - a);
       if (flatList.length >= 4) {
-        // 4th highest item charged at 1 rs
         const discountedItemValue = flatList[3] - 1; 
         discount += discountedItemValue;
-        workingText = `• Code B3G1 applied.\n• Logic: Buy 3 Get 1 at ₹1 (4th highest is ₹1).\n• 4th Item Discount: ₹${discountedItemValue.toFixed(2)}`;
+        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Buy 3 Get 1 at ₹1 (4th highest is ₹1).\n• 4th Item Discount: ₹${discountedItemValue.toFixed(2)}`;
         if (flatList.length >= 5) {
           let addl = flatList.slice(4).reduce((a, b) => a + (b * 0.10), 0);
           discount += addl;
@@ -320,7 +347,7 @@ export default function App() {
         }
       } else {
         discount = gross * 0.10;
-        workingText = `• Code B3G1 applied.\n• Logic: Fewer than 4 items. Flat 10% discount applied.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
+        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Fewer than 4 items. Flat 10% discount applied.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
       }
     } else if (code === 'ZODREPEAT') {
       let pct = 0.20;
@@ -330,7 +357,7 @@ export default function App() {
         logicText = "Total units ≥ 4 (30% off)";
       }
       discount = gross * pct;
-      workingText = `• Code ZODREPEAT applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
     } else if (code === 'REFZOD') {
       let pct = 0.15;
       let logicText = "Total units ≤ 3 (15% off)";
@@ -339,17 +366,17 @@ export default function App() {
         logicText = "Total units ≥ 4 (25% off)";
       }
       discount = gross * pct;
-      workingText = `• Code REFZOD applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
     } else if (code === 'ZOD500') {
       if (gross > 1000) {
         discount = 500 + (Math.floor((gross - 1000) / 1000) * 200);
         discount = Math.min(discount, 2000);
-        workingText = `• Code ZOD500 applied.\n• Logic: ₹500 off base (>₹1000) + ₹200 per subsequent full ₹1000 (Max ₹2000).\n• Calculation Total: ₹${discount.toFixed(2)}`;
+        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ₹500 off base (>₹1000) + ₹200 per subsequent full ₹1000 (Max ₹2000).\n• Calculation Total: ₹${discount.toFixed(2)}`;
       } else {
-        workingText = `• Code ZOD500: Gross total must be above ₹1000.`;
+        workingText = `• Code ${enteredCode}${mapNote}: Gross total must be above ₹1000.`;
       }
-    } else if (code) {
-       workingText = `• Discount code entered but not recognized or applicable.`;
+    } else if (enteredCode) {
+       workingText = `• Discount code entered but not recognized or is inactive.`;
     }
 
     discount = Math.min(discount, gross);
@@ -363,7 +390,7 @@ export default function App() {
     if (isSaving) return;
     
     const payload = {
-      apiToken: APP_PIN, // Secure verification token sent to server
+      apiToken: APP_PIN, 
       orderId,
       timestamp: getUniformTimestamp(),
       customer: customer.name.trim(),
@@ -371,9 +398,9 @@ export default function App() {
       executive: customer.executive.trim(),
       totalUnits: totals.totalUnits,
       totalAmount: totals.net,
-      discountCode: customer.discountCode.trim().toUpperCase() || "NONE",
+      discountCode: customer.discountCode.trim().toUpperCase() || "NONE", // Sends the original mapped code!
       discountAmount: totals.discount,
-      paymentMethod: paymentMethod, // Now capturing Cash vs Online
+      paymentMethod: paymentMethod,
       lineItems: cart
     };
 
@@ -406,7 +433,7 @@ export default function App() {
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
     setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
-    setPaymentMethod('Online'); // Reset payment method to default
+    setPaymentMethod('Online'); 
     setShowSummary(false); setIsSaving(false);
     setTimeout(() => { fetchInventory(); }, 2000);
   };
@@ -568,7 +595,6 @@ export default function App() {
 
             {!isSkuLocked && itemForm.sku && (
               <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300">
-                {/* Note: Removed capture="environment" so mobile prompts for Camera OR Gallery */}
                 <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoUpload} className="hidden" />
                 <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 flex-1 bg-white border border-gray-200 p-2 rounded-lg text-sm text-gray-600 font-medium">
                   <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo/Gallery'}
@@ -683,7 +709,7 @@ export default function App() {
                 <div className="flex justify-between"><span className="text-gray-500">Phone</span><span className="font-bold">{customer.phone || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Executive</span><span className="font-bold">{customer.executive}</span></div>
                 
-                {/* NEW: Payment Method Toggle */}
+                {/* Payment Method Toggle */}
                 <div className="pt-3 border-t border-gray-200">
                   <p className="text-xs text-gray-500 mb-2 uppercase font-bold tracking-wider">Select Payment Method</p>
                   <div className="flex gap-2">
