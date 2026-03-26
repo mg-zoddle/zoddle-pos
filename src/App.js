@@ -17,8 +17,9 @@ const Search = ({className}) => <Icon className={className}><circle cx="11" cy="
 const FileText = ({className}) => <Icon className={className}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></Icon>;
 const Lock = ({className}) => <Icon className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
 const ShieldCheck = ({className}) => <Icon className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></Icon>;
+const ListIcon = ({className}) => <Icon className={className}><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycby2YFoJxux6_DbSVQqK5Nw4m69p-XiK6T7OJGFwciUeph9QqbleB_pXohCHSMYv2I9C/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyjc_yUncjw2jVZt9s57P8PYy4yVeD0Uq1YQuOLS4G__D7UK2mul_BuIXsql3_rO6hh/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -91,15 +92,17 @@ export default function App() {
   // --- App State ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [inventory, setInventory] = useState([]);
-  const [discountMap, setDiscountMap] = useState({}); // Stores Custom Code -> Base Code mappings
+  const [discountMap, setDiscountMap] = useState({});
   const [syncQueue, setSyncQueue] = useState([]);
+  const [auditLog, setAuditLog] = useState([]); // Persistent Local Log
   const [status, setStatus] = useState({ type: 'info', text: 'Initializing...' });
   const [isSaving, setIsSaving] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
 
   // Order Header State
   const [orderId, setOrderId] = useState(generateOrderId());
   const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
-  const [paymentMethod, setPaymentMethod] = useState('Online'); // Default payment method
+  const [paymentMethod, setPaymentMethod] = useState('Online');
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
@@ -151,6 +154,12 @@ export default function App() {
       const decrypted = decryptData(savedQueue, APP_PIN);
       if (decrypted) setSyncQueue(decrypted);
     }
+    
+    const savedLog = localStorage.getItem('zoddle_audit_log');
+    if (savedLog) {
+      const decryptedLog = decryptData(savedLog, APP_PIN);
+      if (decryptedLog) setAuditLog(decryptedLog);
+    }
   };
 
   useEffect(() => {
@@ -159,20 +168,42 @@ export default function App() {
     }
   }, [syncQueue, isAuthenticated]);
 
+  // Helper function to update the permanent local log
+  const logOrderLocally = (payload, status) => {
+    setAuditLog(prev => {
+      const newLog = [{
+        id: payload.orderId,
+        time: payload.timestamp,
+        name: payload.customer,
+        amount: payload.totalAmount,
+        status: status,
+        units: payload.totalUnits
+      }, ...prev].slice(0, 100); // Keep last 100 orders strictly
+      localStorage.setItem('zoddle_audit_log', encryptData(newLog, APP_PIN));
+      return newLog;
+    });
+  };
+
+  const updateAuditLogStatus = (orderId, newStatus) => {
+    setAuditLog(prev => {
+      const newLog = prev.map(entry => entry.id === orderId ? { ...entry, status: newStatus } : entry);
+      localStorage.setItem('zoddle_audit_log', encryptData(newLog, APP_PIN));
+      return newLog;
+    });
+  };
+
   const fetchInventory = async () => {
     try {
       if (!navigator.onLine) throw new Error("Offline");
       const response = await fetch(API_ENDPOINT);
       const data = await response.json();
       
-      // Handle the new nested structure (inventory + discountMap)
       if (data && data.inventory) {
         setInventory(data.inventory);
         setDiscountMap(data.discountMap || {});
         localStorage.setItem('zoddle_inventory', JSON.stringify(data.inventory));
         localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
       } else {
-        // Fallback if backend hasn't updated yet
         setInventory(data);
         localStorage.setItem('zoddle_inventory', JSON.stringify(data));
       }
@@ -199,13 +230,20 @@ export default function App() {
     let newQueue = [...syncQueue];
     for (let i = syncQueue.length - 1; i >= 0; i--) {
       try {
-        await fetch(API_ENDPOINT, {
+        const response = await fetch(API_ENDPOINT, {
           method: 'POST',
-          mode: 'no-cors',
+          // Explicitly reading JSON to guarantee successful script execution
           headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify(syncQueue[i])
         });
-        newQueue.splice(i, 1);
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+          updateAuditLogStatus(syncQueue[i].orderId, 'SYNCED');
+          newQueue.splice(i, 1);
+        } else {
+          console.error("Server rejected item during sync", result.message);
+        }
       } catch (err) {
         console.error("Failed to sync item", err);
       }
@@ -219,7 +257,7 @@ export default function App() {
   // --- Form Handlers ---
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
-    setFormError(""); // Clear any previous errors
+    setFormError(""); 
     if (!sku) {
       setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null }));
       setIsSkuLocked(false);
@@ -246,7 +284,7 @@ export default function App() {
     if (!file) return;
     const compressedBase64 = await compressImage(file);
     setItemForm(prev => ({ ...prev, photoData: compressedBase64 }));
-    setFormError(""); // Clear error when a photo is added
+    setFormError(""); 
   };
 
   const addToCart = () => {
@@ -260,7 +298,7 @@ export default function App() {
       return;
     }
 
-    setFormError(""); // Clear error on successful add
+    setFormError(""); 
     setCart([...cart, { ...itemForm, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
     setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
     setIsSkuLocked(false);
@@ -275,17 +313,15 @@ export default function App() {
     let workingText = "";
     
     const enteredCode = customer.discountCode.trim().toUpperCase();
-    let code = ""; // Default to empty string instead of entered code
+    let code = ""; 
     let mapNote = "";
 
-    // DYNAMIC MAPPING ONLY: Only mapped and active codes are allowed.
-    // Base codes are no longer accepted directly unless they are explicitly mapped.
     if (enteredCode) {
       if (discountMap[enteredCode]) {
         code = discountMap[enteredCode];
         mapNote = ` (Mapped to base code: ${code})`;
       } else {
-        code = "INVALID"; // Invalidates unmapped codes or inactive codes
+        code = "INVALID"; 
       }
     }
 
@@ -398,35 +434,41 @@ export default function App() {
       executive: customer.executive.trim(),
       totalUnits: totals.totalUnits,
       totalAmount: totals.net,
-      discountCode: customer.discountCode.trim().toUpperCase() || "NONE", // Sends the original mapped code!
+      discountCode: customer.discountCode.trim().toUpperCase() || "NONE",
       discountAmount: totals.discount,
       paymentMethod: paymentMethod,
       lineItems: cart
     };
 
     setIsSaving(true);
-    setStatus({ type: 'warning', text: 'Processing order...' });
+    setStatus({ type: 'warning', text: 'Connecting to Server...' });
 
-    if (isOnline) {
-      try {
-        await fetch(API_ENDPOINT, {
-          method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload)
-        });
+    // NEW CHECK LAYER: Explicitly verifying server response
+    try {
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'text/plain' }, 
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      
+      if (result.status === 'success') {
+        logOrderLocally(payload, 'SYNCED');
         finishOrderSubmission();
-      } catch (err) {
-        setSyncQueue([...syncQueue, payload]);
-        setStatus({ type: 'warning', text: 'Network error. Saved offline securely.' });
-        resetForm();
+      } else {
+        throw new Error(result.message || "Server explicitly rejected the payload.");
       }
-    } else {
+    } catch (err) {
+      // Any failure (timeout, lock issue, network drop) lands safely here
       setSyncQueue([...syncQueue, payload]);
-      setStatus({ type: 'warning', text: 'Saved to Secure Offline Queue.' });
+      logOrderLocally(payload, 'OFFLINE_PENDING');
+      setStatus({ type: 'error', text: 'Error detected. Saved to Secure Offline Queue.' });
       resetForm();
     }
   };
 
   const finishOrderSubmission = () => {
-    setStatus({ type: 'success', text: 'Order captured successfully!' });
+    setStatus({ type: 'success', text: 'Order captured & verified successfully!' });
     resetForm();
   };
 
@@ -486,6 +528,9 @@ export default function App() {
             <p className="text-xs text-gray-500">Secure Mobile Edition</p>
           </div>
           <div className="flex items-center gap-3">
+            <button onClick={() => setShowAuditModal(true)} className="p-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors rounded-full" title="Audit Log">
+              <ListIcon className="w-5 h-5"/>
+            </button>
             {isOnline ? <Wifi className="text-green-500 w-5 h-5" /> : <WifiOff className="text-red-500 w-5 h-5" />}
             {syncQueue.length > 0 && (
               <button 
@@ -780,6 +825,48 @@ export default function App() {
               <button onClick={submitOrder} disabled={isSaving} className={`w-full text-white font-bold p-4 rounded-xl shadow-lg text-lg flex justify-center items-center gap-2 ${paymentMethod === 'Cash' ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-pink-600 hover:bg-pink-700 shadow-pink-200'}`}>
                 {isSaving ? 'Saving...' : (isOnline ? 'Confirm & Save' : 'Save Offline')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: Local Audit Log Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 sm:p-0">
+          <div className="bg-white w-full max-w-md rounded-3xl max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
+            <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold flex items-center gap-2 text-gray-800"><ListIcon className="w-5 h-5 text-pink-500"/> Audit Log</h2>
+              <button onClick={() => setShowAuditModal(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><X className="w-5 h-5"/></button>
+            </div>
+            
+            <div className="overflow-y-auto p-4 flex-1 space-y-3 bg-gray-50/50">
+              <p className="text-xs text-gray-500 text-center mb-4 font-medium uppercase tracking-wider">Last 100 Transactions</p>
+              
+              {auditLog.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 flex flex-col items-center">
+                  <FileText className="w-10 h-10 mb-2 opacity-50" />
+                  <p>No local logs found on this device.</p>
+                </div>
+              ) : (
+                auditLog.map((log, i) => (
+                  <div key={i} className={`border rounded-xl p-3 bg-white shadow-sm flex flex-col gap-2 ${log.status === 'OFFLINE_PENDING' ? 'border-red-200 ring-1 ring-red-100' : 'border-gray-100'}`}>
+                    <div className="flex justify-between items-start">
+                      <span className="text-xs font-mono font-bold text-gray-500">{log.id}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider ${log.status === 'SYNCED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
+                        {log.status === 'SYNCED' ? '✔ SYNCED' : '⚠ PENDING'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-sm text-gray-800">{log.name}</span>
+                      <span className="font-black text-pink-600">₹{log.amount?.toFixed(2)}</span>
+                    </div>
+                    <div className="text-[10px] font-medium text-gray-400 flex justify-between">
+                      <span>{log.time}</span>
+                      <span>{log.units} Unit(s)</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
