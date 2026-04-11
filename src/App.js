@@ -73,7 +73,7 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 600;
+        const MAX_WIDTH = 800; // UPDATED: 800px max width as requested
         const scaleSize = MAX_WIDTH / img.width;
         canvas.width = MAX_WIDTH;
         canvas.height = img.height * scaleSize;
@@ -173,16 +173,8 @@ export default function App() {
 
   // Helper function to update the permanent local log
   const logOrderLocally = (payload, status) => {
-    // Remove heavy base64 photo data before saving to long-term audit log to prevent memory limits
-    const lightPayload = {
-      ...payload,
-      lineItems: payload.lineItems.map(item => {
-        const { photoData, ...rest } = item;
-        return rest;
-      })
-    };
-
     setAuditLog(prev => {
+      // We now keep the full payload including the base64 photoData
       const newLog = [{
         id: payload.orderId,
         time: payload.timestamp,
@@ -190,10 +182,24 @@ export default function App() {
         amount: payload.totalAmount,
         status: status,
         units: payload.totalUnits,
-        fullDetails: lightPayload
-      }, ...prev].slice(0, 100); // Keep last 100 orders strictly
-      localStorage.setItem('zoddle_audit_log', encryptData(newLog, APP_PIN));
-      return newLog;
+        fullDetails: payload 
+      }, ...prev];
+
+      // Smart Storage Management: Keep up to 40 records, but safely handle QuotaExceeded errors
+      // by popping the oldest record until it fits in the 5MB browser limit.
+      let stored = false;
+      let currentLog = [...newLog].slice(0, 40); 
+      
+      while (!stored && currentLog.length > 0) {
+        try {
+          localStorage.setItem('zoddle_audit_log', encryptData(currentLog, APP_PIN));
+          stored = true;
+        } catch (e) {
+          // If storage limit is hit, remove the oldest item and try again
+          currentLog.pop();
+        }
+      }
+      return currentLog;
     });
   };
 
@@ -264,15 +270,24 @@ export default function App() {
   };
 
   const resubmitAuditOrder = async (orderId) => {
-    // We pull the order from the pending sync queue because it has the required photos
-    const payloadToSync = syncQueue.find(q => q.orderId === orderId);
+    // Try to pull from pending sync queue first (contains photos)
+    let payloadToSync = syncQueue.find(q => q.orderId === orderId);
+    let isForceSync = false;
+
     if (!payloadToSync) {
-      setStatus({ type: 'error', text: 'Full order data not found in offline queue.' });
-      return;
+      // Fallback to the audit log details (Now contains photos too!)
+      const auditEntry = auditLog.find(log => log.id === orderId);
+      if (auditEntry && auditEntry.fullDetails) {
+        payloadToSync = auditEntry.fullDetails;
+        isForceSync = true;
+      } else {
+        setStatus({ type: 'error', text: 'Order data not found locally.' });
+        return;
+      }
     }
 
     setIsSaving(true);
-    setStatus({ type: 'warning', text: 'Resubmitting order...' });
+    setStatus({ type: 'warning', text: isForceSync ? 'Force re-syncing order...' : 'Resubmitting order...' });
 
     try {
       await fetch(API_ENDPOINT, {
@@ -283,7 +298,9 @@ export default function App() {
       });
       
       updateAuditLogStatus(orderId, 'SYNCED');
-      setSyncQueue(prev => prev.filter(q => q.orderId !== orderId));
+      if (!isForceSync) {
+        setSyncQueue(prev => prev.filter(q => q.orderId !== orderId));
+      }
       setStatus({ type: 'success', text: `Order synced successfully!` });
     } catch (err) {
       setStatus({ type: 'error', text: 'Resubmit failed. Please check your connection.' });
@@ -972,7 +989,16 @@ export default function App() {
                               <tbody className="divide-y divide-gray-100">
                                 {activeAuditOrder.fullDetails.lineItems.map((item, idx) => (
                                   <tr key={idx}>
-                                    <td className="p-2 font-mono font-medium">{item.sku}</td>
+                                    <td className="p-2 font-mono font-medium">
+                                      <div className="flex items-center gap-2">
+                                        {item.photoData ? (
+                                          <img src={item.photoData} className="w-8 h-8 rounded object-cover border bg-gray-100 flex-shrink-0" alt="Item" />
+                                        ) : (
+                                          <div className="w-8 h-8 rounded bg-gray-100 border flex items-center justify-center text-[6px] text-gray-400 text-center flex-shrink-0">NO IMG</div>
+                                        )}
+                                        <span>{item.sku}</span>
+                                      </div>
+                                    </td>
                                     <td className="p-2 text-right">₹{item.zrp}</td>
                                     <td className="p-2 text-right">{item.units}</td>
                                     <td className="p-2 text-right font-bold">₹{(item.zrp * item.units).toFixed(2)}</td>
@@ -994,8 +1020,8 @@ export default function App() {
                       </div>
                    )}
                 </div>
-                {activeAuditOrder.status === 'OFFLINE_PENDING' && (
-                   <div className="p-4 border-t bg-white">
+                <div className="p-4 border-t bg-white space-y-3">
+                   {activeAuditOrder.status === 'OFFLINE_PENDING' ? (
                       <button 
                          onClick={() => resubmitAuditOrder(activeAuditOrder.id)} 
                          disabled={isSaving} 
@@ -1004,8 +1030,20 @@ export default function App() {
                          {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
                          {isSaving ? 'Submitting...' : 'Resubmit to Cloud'}
                       </button>
-                   </div>
-                )}
+                   ) : (
+                      <>
+                        <p className="text-[10px] text-gray-500 text-center">If this order is missing from the system, you can force a complete re-upload including images.</p>
+                        <button 
+                           onClick={() => resubmitAuditOrder(activeAuditOrder.id)} 
+                           disabled={isSaving} 
+                           className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl shadow-lg shadow-gray-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98]"
+                        >
+                           {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
+                           {isSaving ? 'Submitting...' : 'Force Re-sync to Cloud'}
+                        </button>
+                      </>
+                   )}
+                </div>
               </>
             )}
             
