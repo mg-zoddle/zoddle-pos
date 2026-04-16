@@ -108,6 +108,7 @@ export default function App() {
   // Order Header State
   const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
   const [preAssignedId, setPreAssignedId] = useState(''); // Search box state & final Pre-Assigned ID
+  const [lastAutoFilledId, setLastAutoFilledId] = useState(''); // Tracks autofill to prevent overrides
   const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
 
@@ -147,7 +148,7 @@ export default function App() {
       setIsAuthenticated(true);
       setAuthError(false);
       loadEncryptedData();
-      fetchInventory(); 
+      fetchInventory(false); 
     } else {
       setAuthError(true);
       setPinInput("");
@@ -213,8 +214,8 @@ export default function App() {
     });
   };
 
-  const fetchInventory = async () => {
-    setIsFetching(true);
+  const fetchInventory = async (isSilent = false) => {
+    if (!isSilent) setIsFetching(true);
     try {
       if (!navigator.onLine) throw new Error("Offline");
 
@@ -233,7 +234,7 @@ export default function App() {
         localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
         localStorage.setItem('zoddle_order_db', JSON.stringify(freshOrderDb));
         
-        setStatus({ type: 'success', text: 'Data Synced' });
+        if (!isSilent) setStatus({ type: 'success', text: 'Data Synced' });
       } else {
         throw new Error("Invalid format");
       }
@@ -243,13 +244,24 @@ export default function App() {
       if (cachedInv) {
         setInventory(JSON.parse(cachedInv));
         if (cachedMap) setDiscountMap(JSON.parse(cachedMap));
-        setStatus({ type: 'warning', text: 'Offline Mode: Using cached data' });
+        if (!isSilent) setStatus({ type: 'warning', text: 'Offline Mode: Using cached data' });
       } else {
-        setStatus({ type: 'error', text: 'Offline Mode: No data cached' });
+        if (!isSilent) setStatus({ type: 'error', text: 'Offline Mode: No data cached' });
       }
     }
-    setIsFetching(false);
+    if (!isSilent) setIsFetching(false);
   };
+
+  // NEW: Background Auto-Refresh every 2 minutes to keep DB fresh seamlessly
+  useEffect(() => {
+    let interval;
+    if (isAuthenticated && isOnline) {
+      interval = setInterval(() => {
+        fetchInventory(true); // true = run silently without changing UI banners
+      }, 120000); 
+    }
+    return () => clearInterval(interval);
+  }, [isAuthenticated, isOnline]);
 
   const syncOfflineQueue = async () => {
     if (syncQueue.length === 0 || !isOnline || isSaving) return;
@@ -329,8 +341,18 @@ export default function App() {
         phone: '',
         discountCode: ''
       }));
+      setLastAutoFilledId(''); // Reset tracking state when cleared
       return;
     }
+  };
+
+  // NEW: Auto-populate effect. Actively listens for late-arriving data from downloads.
+  useEffect(() => {
+    const searchVal = preAssignedId.trim().toUpperCase();
+    if (!searchVal || orderDatabase.length === 0) return;
+
+    // Prevent overwriting manual edits if this ID was already auto-filled successfully
+    if (lastAutoFilledId === searchVal) return;
 
     const match = orderDatabase.find(o => String(o.orderId).trim().toUpperCase() === searchVal);
     if (match) {
@@ -347,8 +369,11 @@ export default function App() {
         phone: maskedPhone || prev.phone,
         discountCode: match.discountCode || prev.discountCode
       }));
+      
+      // Lock it in so manual overrides aren't erased by future background syncs
+      setLastAutoFilledId(searchVal);
     }
-  };
+  }, [orderDatabase, preAssignedId, lastAutoFilledId]);
 
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
@@ -578,10 +603,11 @@ export default function App() {
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
     setPreAssignedId(''); // Clear search box
+    setLastAutoFilledId(''); // Clear observer tracking
     setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
     setShowSummary(false); setIsSaving(false);
-    setTimeout(() => { fetchInventory(); }, 2000); 
+    setTimeout(() => { fetchInventory(false); }, 2000); 
   };
 
   const activeAuditOrder = auditLog.find(log => log.id === selectedAuditOrderId);
@@ -676,10 +702,10 @@ export default function App() {
                      {orderDatabase.length} / 50 IDs loaded
                    </span>
                    <button 
-                     onClick={() => fetchInventory()} 
+                     onClick={() => fetchInventory(false)} 
                      disabled={isFetching}
                      className={`text-gray-400 hover:text-indigo-600 transition-colors ${isFetching ? 'animate-spin text-indigo-400' : ''}`} 
-                     title="Refresh Auto-Fill Database"
+                     title="Force Manual Database Sync"
                    >
                      <RefreshCw className="w-4 h-4"/>
                    </button>
