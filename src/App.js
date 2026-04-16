@@ -20,8 +20,9 @@ const ShieldCheck = ({className}) => <Icon className={className}><path d="M12 22
 const ListIcon = ({className}) => <Icon className={className}><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></Icon>;
 const ChevronLeft = ({className}) => <Icon className={className}><polyline points="15 18 9 12 15 6"/></Icon>;
 const ChevronRight = ({className}) => <Icon className={className}><polyline points="9 18 15 12 9 6"/></Icon>;
+const RefreshCw = ({className}) => <Icon className={className}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyjc_yUncjw2jVZt9s57P8PYy4yVeD0Uq1YQuOLS4G__D7UK2mul_BuIXsql3_rO6hh/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwBTDf-XDTt9fo4dUli_s0dL7ivT6lW0IE8BbeLZWBCIPM_pwBIsSb_NIK8Lssk9VVJ/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -73,7 +74,7 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // UPDATED: 800px max width as requested
+        const MAX_WIDTH = 800; // 800px max width
         const scaleSize = MAX_WIDTH / img.width;
         canvas.width = MAX_WIDTH;
         canvas.height = img.height * scaleSize;
@@ -95,15 +96,18 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [inventory, setInventory] = useState([]);
   const [discountMap, setDiscountMap] = useState({});
+  const [orderDatabase, setOrderDatabase] = useState([]); // Stores auto-fill DB (Last 50)
   const [syncQueue, setSyncQueue] = useState([]);
   const [auditLog, setAuditLog] = useState([]); // Persistent Local Log
   const [status, setStatus] = useState({ type: 'info', text: 'Initializing...' });
   const [isSaving, setIsSaving] = useState(false);
+  const [isFetching, setIsFetching] = useState(false); 
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [selectedAuditOrderId, setSelectedAuditOrderId] = useState(null);
 
   // Order Header State
-  const [orderId, setOrderId] = useState(generateOrderId());
+  const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
+  const [preAssignedId, setPreAssignedId] = useState(''); // Search box state & final Pre-Assigned ID
   const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
 
@@ -143,7 +147,7 @@ export default function App() {
       setIsAuthenticated(true);
       setAuthError(false);
       loadEncryptedData();
-      fetchInventory();
+      fetchInventory(); 
     } else {
       setAuthError(true);
       setPinInput("");
@@ -163,6 +167,9 @@ export default function App() {
       const decryptedLog = decryptData(savedLog, APP_PIN);
       if (decryptedLog) setAuditLog(decryptedLog);
     }
+    
+    const cachedDb = localStorage.getItem('zoddle_order_db');
+    if (cachedDb) setOrderDatabase(JSON.parse(cachedDb));
   };
 
   useEffect(() => {
@@ -171,12 +178,10 @@ export default function App() {
     }
   }, [syncQueue, isAuthenticated]);
 
-  // Helper function to update the permanent local log
   const logOrderLocally = (payload, status) => {
     setAuditLog(prev => {
-      // We now keep the full payload including the base64 photoData
       const newLog = [{
-        id: payload.orderId,
+        id: payload.orderId, // Logs the internal ZORD-xxx ID locally for continuity
         time: payload.timestamp,
         name: payload.customer,
         amount: payload.totalAmount,
@@ -185,8 +190,6 @@ export default function App() {
         fullDetails: payload 
       }, ...prev];
 
-      // Smart Storage Management: Keep up to 40 records, but safely handle QuotaExceeded errors
-      // by popping the oldest record until it fits in the 5MB browser limit.
       let stored = false;
       let currentLog = [...newLog].slice(0, 40); 
       
@@ -195,7 +198,6 @@ export default function App() {
           localStorage.setItem('zoddle_audit_log', encryptData(currentLog, APP_PIN));
           stored = true;
         } catch (e) {
-          // If storage limit is hit, remove the oldest item and try again
           currentLog.pop();
         }
       }
@@ -212,22 +214,29 @@ export default function App() {
   };
 
   const fetchInventory = async () => {
+    setIsFetching(true);
     try {
       if (!navigator.onLine) throw new Error("Offline");
+
       const response = await fetch(API_ENDPOINT);
       const data = await response.json();
       
       if (data && data.inventory) {
         setInventory(data.inventory);
         setDiscountMap(data.discountMap || {});
+        
+        // Replaces the local DB entirely with the bottom 50 rows returned by the script
+        const freshOrderDb = data.orderDatabase || [];
+        setOrderDatabase(freshOrderDb);
+        
         localStorage.setItem('zoddle_inventory', JSON.stringify(data.inventory));
         localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
+        localStorage.setItem('zoddle_order_db', JSON.stringify(freshOrderDb));
+        
+        setStatus({ type: 'success', text: 'Data Synced' });
       } else {
-        setInventory(data);
-        localStorage.setItem('zoddle_inventory', JSON.stringify(data));
+        throw new Error("Invalid format");
       }
-
-      setStatus({ type: 'success', text: 'Data Synced' });
     } catch (e) {
       const cachedInv = localStorage.getItem('zoddle_inventory');
       const cachedMap = localStorage.getItem('zoddle_discount_map');
@@ -239,6 +248,7 @@ export default function App() {
         setStatus({ type: 'error', text: 'Offline Mode: No data cached' });
       }
     }
+    setIsFetching(false);
   };
 
   const syncOfflineQueue = async () => {
@@ -251,12 +261,11 @@ export default function App() {
       try {
         await fetch(API_ENDPOINT, {
           method: 'POST',
-          mode: 'no-cors', // Opaque response prevents CORS JSON read blocking
+          mode: 'no-cors', 
           headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify(syncQueue[i])
         });
         
-        // If fetch succeeds without a network error, we assume success
         updateAuditLogStatus(syncQueue[i].orderId, 'SYNCED');
         newQueue.splice(i, 1);
       } catch (err) {
@@ -270,12 +279,10 @@ export default function App() {
   };
 
   const resubmitAuditOrder = async (orderId) => {
-    // Try to pull from pending sync queue first (contains photos)
     let payloadToSync = syncQueue.find(q => q.orderId === orderId);
     let isForceSync = false;
 
     if (!payloadToSync) {
-      // Fallback to the audit log details (Now contains photos too!)
       const auditEntry = auditLog.find(log => log.id === orderId);
       if (auditEntry && auditEntry.fullDetails) {
         payloadToSync = auditEntry.fullDetails;
@@ -309,6 +316,40 @@ export default function App() {
   };
 
   // --- Form Handlers ---
+  const handlePreAssignedIdChange = (e) => {
+    const val = e.target.value;
+    setPreAssignedId(val);
+    
+    const searchVal = val.trim().toUpperCase();
+    if (!searchVal) {
+      // Clear corresponding customer data if the ID is completely erased
+      setCustomer(prev => ({
+        ...prev,
+        name: '',
+        phone: '',
+        discountCode: ''
+      }));
+      return;
+    }
+
+    const match = orderDatabase.find(o => String(o.orderId).trim().toUpperCase() === searchVal);
+    if (match) {
+      let maskedPhone = match.phone;
+      if (maskedPhone && maskedPhone.length >= 4) {
+        maskedPhone = '*'.repeat(maskedPhone.length - 4) + maskedPhone.slice(-4);
+      } else if (maskedPhone) {
+        maskedPhone = '*'.repeat(maskedPhone.length);
+      }
+      
+      setCustomer(prev => ({
+        ...prev,
+        name: match.name || prev.name,
+        phone: maskedPhone || prev.phone,
+        discountCode: match.discountCode || prev.discountCode
+      }));
+    }
+  };
+
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
     setFormError(""); 
@@ -352,8 +393,10 @@ export default function App() {
       return;
     }
 
+    const finalUnits = parseInt(itemForm.units) || 1; 
+
     setFormError(""); 
-    setCart([...cart, { ...itemForm, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
+    setCart([...cart, { ...itemForm, units: finalUnits, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
     setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
     setIsSkuLocked(false);
   };
@@ -371,7 +414,6 @@ export default function App() {
     let mapNote = "";
 
     if (enteredCode) {
-      // Normalize map to remove invisible spaces from Google Sheets
       const safeMap = {};
       Object.keys(discountMap || {}).forEach(k => {
         safeMap[k.trim().toUpperCase()] = discountMap[k]?.toString().trim().toUpperCase();
@@ -383,8 +425,6 @@ export default function App() {
           mapNote = ` (Mapped to base code: ${code})`;
         }
       } else if (Object.keys(safeMap).length === 0) {
-        // FAILSAFE: If the backend map is completely empty (e.g., failed to fetch),
-        // we allow direct matching so the business isn't blocked.
         code = enteredCode;
       } else {
         code = "INVALID"; 
@@ -486,14 +526,17 @@ export default function App() {
   };
 
   const totals = calculateTotals();
-  const isReadyToSubmit = cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '';
+  
+  // IsReadyToSubmit enforces that the Pre-Assigned ID must be filled out before checking out
+  const isReadyToSubmit = cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '' && preAssignedId.trim() !== '';
 
   const submitOrder = async () => {
     if (isSaving) return;
     
     const payload = {
       apiToken: APP_PIN, 
-      orderId,
+      orderId: orderId, // Retain the auto-generated internal ID
+      preAssignedId: preAssignedId.trim().toUpperCase(), // Send the mandatory pre-assigned ID separately
       timestamp: getUniformTimestamp(),
       customer: customer.name.trim(),
       phone: customer.phone.trim(),
@@ -510,8 +553,6 @@ export default function App() {
     setStatus({ type: 'warning', text: 'Connecting to Server...' });
 
     try {
-      // Reverted to mode: 'no-cors'. Opaque response prevents CORS from incorrectly failing the fetch,
-      // while preserving the robust Audit Log tracking system.
       await fetch(API_ENDPOINT, {
         method: 'POST', 
         mode: 'no-cors',
@@ -522,7 +563,6 @@ export default function App() {
       logOrderLocally(payload, 'SYNCED');
       finishOrderSubmission();
     } catch (err) {
-      // Catch triggers only on absolute network/DNS failures
       setSyncQueue([...syncQueue, payload]);
       logOrderLocally(payload, 'OFFLINE_PENDING');
       setStatus({ type: 'error', text: 'Error detected. Saved to Secure Offline Queue.' });
@@ -537,10 +577,11 @@ export default function App() {
 
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
+    setPreAssignedId(''); // Clear search box
     setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
     setShowSummary(false); setIsSaving(false);
-    setTimeout(() => { fetchInventory(); }, 2000);
+    setTimeout(() => { fetchInventory(); }, 2000); 
   };
 
   const activeAuditOrder = auditLog.find(log => log.id === selectedAuditOrderId);
@@ -624,6 +665,40 @@ export default function App() {
             <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono">{orderId}</span>
           </div>
           <div className="space-y-3">
+            
+            {/* Pre-Assigned Search Box - MANDATORY */}
+            <div className="mb-3">
+               <div className="flex justify-between items-end mb-1">
+                 <label className="text-[10px] font-bold text-indigo-400 uppercase">Pre-Assigned Order ID *</label>
+                 
+                 <div className="flex items-center gap-2">
+                   <span className={`text-[9px] font-bold ${orderDatabase.length > 0 ? 'text-green-500' : 'text-red-400'}`}>
+                     {orderDatabase.length} / 50 IDs loaded
+                   </span>
+                   <button 
+                     onClick={() => fetchInventory()} 
+                     disabled={isFetching}
+                     className={`text-gray-400 hover:text-indigo-600 transition-colors ${isFetching ? 'animate-spin text-indigo-400' : ''}`} 
+                     title="Refresh Auto-Fill Database"
+                   >
+                     <RefreshCw className="w-4 h-4"/>
+                   </button>
+                 </div>
+               </div>
+               <div className="relative">
+                 <input 
+                   type="text" 
+                   value={preAssignedId} 
+                   onChange={handlePreAssignedIdChange} 
+                   className="w-full bg-indigo-50 border border-indigo-100 rounded-lg p-2.5 text-sm font-bold uppercase text-indigo-700 focus:ring-2 focus:ring-indigo-300" 
+                   placeholder="Required..." 
+                 />
+                 {preAssignedId && orderDatabase.some(o => String(o.orderId).trim().toUpperCase() === preAssignedId.trim().toUpperCase()) && (
+                   <CheckCircle className="w-5 h-5 text-green-500 absolute right-3 top-2.5" />
+                 )}
+               </div>
+            </div>
+            
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Customer Name</label>
@@ -699,7 +774,14 @@ export default function App() {
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Qty</label>
-                <input type="number" min="1" value={itemForm.units} onChange={e => setItemForm({...itemForm, units: parseInt(e.target.value) || 1})} className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold" />
+                <input 
+                  type="number" 
+                  min="1" 
+                  value={itemForm.units} 
+                  onFocus={e => e.target.select()} 
+                  onChange={e => setItemForm({...itemForm, units: e.target.value === '' ? '' : parseInt(e.target.value)})} 
+                  className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold" 
+                />
               </div>
             </div>
 
@@ -810,7 +892,7 @@ export default function App() {
               <div className="text-center space-y-1">
                 <p className="text-sm text-gray-500">Total Payable Amount</p>
                 <p className="text-4xl font-black text-pink-600">₹{totals.net.toFixed(2)}</p>
-                <p className="text-xs font-mono text-gray-400">{orderId}</p>
+                <p className="text-xs font-mono text-gray-400">System: {orderId} | Ref: {preAssignedId.trim().toUpperCase()}</p>
               </div>
               
               {/* Customer Header Info & Payment Method */}
@@ -895,7 +977,7 @@ export default function App() {
         </div>
       )}
 
-      {/* NEW: Local Audit Log Modal */}
+      {/* Local Audit Log Modal */}
       {showAuditModal && (
         <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 sm:p-0">
           <div className="bg-white w-full max-w-md rounded-3xl max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
@@ -909,7 +991,7 @@ export default function App() {
                 </div>
                 
                 <div className="overflow-y-auto p-4 flex-1 space-y-3 bg-gray-50/50">
-                  <p className="text-xs text-gray-500 text-center mb-4 font-medium uppercase tracking-wider">Last 100 Transactions</p>
+                  <p className="text-xs text-gray-500 text-center mb-4 font-medium uppercase tracking-wider">Last 40 Transactions</p>
                   
                   {auditLog.length === 0 ? (
                     <div className="text-center text-gray-400 py-10 flex flex-col items-center">
@@ -956,7 +1038,7 @@ export default function App() {
                     Order Details
                     <span className="text-[10px] font-mono font-normal text-gray-500">{activeAuditOrder.id}</span>
                   </h2>
-                  <div className="w-9" /> {/* Spacer to balance flex header */}
+                  <div className="w-9" />
                 </div>
                 
                 <div className="overflow-y-auto p-4 flex-1 bg-gray-50/50">
@@ -969,6 +1051,7 @@ export default function App() {
                       <div className="space-y-4">
                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-sm space-y-2">
                           <div className="flex justify-between text-gray-500"><span>Date:</span> <span className="font-medium text-gray-900">{activeAuditOrder.time}</span></div>
+                          <div className="flex justify-between text-gray-500"><span>Pre-Assigned ID:</span> <span className="font-bold text-indigo-600">{activeAuditOrder.fullDetails.preAssignedId || '-'}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Customer:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.customer}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Phone:</span> <span className="font-medium text-gray-900">{activeAuditOrder.fullDetails.phone || '-'}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Executive:</span> <span className="font-medium text-gray-900">{activeAuditOrder.fullDetails.executive}</span></div>
