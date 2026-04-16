@@ -104,6 +104,9 @@ export default function App() {
   const [isFetching, setIsFetching] = useState(false); 
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [selectedAuditOrderId, setSelectedAuditOrderId] = useState(null);
+  
+  // Draft Tracking Reference
+  const draftLoaded = useRef(false);
 
   // Order Header State
   const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
@@ -171,6 +174,21 @@ export default function App() {
     
     const cachedDb = localStorage.getItem('zoddle_order_db');
     if (cachedDb) setOrderDatabase(JSON.parse(cachedDb));
+
+    // NEW: Load unsubmitted draft order state
+    const savedDraft = localStorage.getItem('zoddle_draft_order');
+    if (savedDraft) {
+      const decryptedDraft = decryptData(savedDraft, APP_PIN);
+      if (decryptedDraft) {
+        if (decryptedDraft.cart) setCart(decryptedDraft.cart);
+        if (decryptedDraft.customer) setCustomer(decryptedDraft.customer);
+        if (decryptedDraft.preAssignedId) setPreAssignedId(decryptedDraft.preAssignedId);
+        if (decryptedDraft.paymentMethod) setPaymentMethod(decryptedDraft.paymentMethod);
+        if (decryptedDraft.orderId) setOrderId(decryptedDraft.orderId);
+        if (decryptedDraft.lastAutoFilledId) setLastAutoFilledId(decryptedDraft.lastAutoFilledId);
+      }
+    }
+    draftLoaded.current = true;
   };
 
   useEffect(() => {
@@ -178,6 +196,14 @@ export default function App() {
       localStorage.setItem('zoddle_secure_queue', encryptData(syncQueue, APP_PIN));
     }
   }, [syncQueue, isAuthenticated]);
+
+  // NEW: Save Draft Order State automatically whenever it changes
+  useEffect(() => {
+    if (isAuthenticated && draftLoaded.current) {
+      const draft = { cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId };
+      localStorage.setItem('zoddle_draft_order', encryptData(draft, APP_PIN));
+    }
+  }, [cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, isAuthenticated]);
 
   const logOrderLocally = (payload, status) => {
     setAuditLog(prev => {
@@ -252,7 +278,12 @@ export default function App() {
     if (!isSilent) setIsFetching(false);
   };
 
-  // NEW: Background Auto-Refresh every 2 minutes to keep DB fresh seamlessly
+  // Start data download silently the moment the app loads (even before PIN is entered)
+  useEffect(() => {
+    fetchInventory(true);
+  }, []);
+
+  // Background Auto-Refresh every 2 minutes to keep DB fresh seamlessly
   useEffect(() => {
     let interval;
     if (isAuthenticated && isOnline) {
@@ -346,7 +377,7 @@ export default function App() {
     }
   };
 
-  // NEW: Auto-populate effect. Actively listens for late-arriving data from downloads.
+  // Auto-populate effect. Actively listens for late-arriving data from downloads.
   useEffect(() => {
     const searchVal = preAssignedId.trim().toUpperCase();
     if (!searchVal || orderDatabase.length === 0) return;
@@ -607,6 +638,10 @@ export default function App() {
     setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
     setShowSummary(false); setIsSaving(false);
+    
+    // NEW: Clear the unsubmitted draft order from storage
+    localStorage.removeItem('zoddle_draft_order');
+
     setTimeout(() => { fetchInventory(false); }, 2000); 
   };
 
@@ -688,7 +723,12 @@ export default function App() {
         <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
           <div className="flex justify-between items-center mb-4">
             <h2 className="font-bold text-gray-700 flex items-center gap-2"><FileText className="w-5 h-5 text-pink-500"/> Order Details</h2>
-            <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono">{orderId}</span>
+            <div className="flex items-center gap-3">
+              {(cart.length > 0 || preAssignedId || customer.name) && (
+                <button onClick={resetForm} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded transition-colors">Clear</button>
+              )}
+              <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono">{orderId}</span>
+            </div>
           </div>
           <div className="space-y-3">
             
