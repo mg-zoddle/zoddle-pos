@@ -573,6 +573,24 @@ export default function App() {
       } else {
         workingText = `• Code ${enteredCode}${mapNote}: Gross total must be above ₹1000.`;
       }
+    } else if (code === 'ZODR200') {
+      discount = 200;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹200 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZODR100') {
+      discount = 100;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹100 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZODR50') {
+      discount = 50;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹50 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZOD5P') {
+      discount = gross * 0.05;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 5% discount.\n• Calculation: ₹${gross.toFixed(2)} × 5% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZOD10P') {
+      discount = gross * 0.10;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 10% discount.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'ZOD15P') {
+      discount = gross * 0.15;
+      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 15% discount.\n• Calculation: ₹${gross.toFixed(2)} × 15% = ₹${discount.toFixed(2)}`;
     } else if (enteredCode) {
        workingText = `• Discount code entered but not recognized or is inactive.`;
     }
