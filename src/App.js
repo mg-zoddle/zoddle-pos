@@ -112,7 +112,8 @@ export default function App() {
   const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
   const [preAssignedId, setPreAssignedId] = useState(''); // Search box state & final Pre-Assigned ID
   const [lastAutoFilledId, setLastAutoFilledId] = useState(''); // Tracks autofill to prevent overrides
-  const [customer, setCustomer] = useState({ name: '', phone: '', executive: '', discountCode: '' });
+  // realPhone is added to store the unmasked phone securely in the background
+  const [customer, setCustomer] = useState({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
 
   // Current Item Form State
@@ -370,6 +371,7 @@ export default function App() {
         ...prev,
         name: '',
         phone: '',
+        realPhone: '',
         discountCode: ''
       }));
       setLastAutoFilledId(''); // Reset tracking state when cleared
@@ -398,6 +400,7 @@ export default function App() {
         ...prev,
         name: match.name || prev.name,
         phone: maskedPhone || prev.phone,
+        realPhone: match.phone || prev.realPhone, // Keep real unmasked phone secretly stored
         discountCode: match.discountCode || prev.discountCode
       }));
       
@@ -606,6 +609,12 @@ export default function App() {
 
   const submitOrder = async () => {
     if (isSaving) return;
+
+    let finalPhone = customer.phone.trim();
+    // If the phone field contains asterisks, it was masked in the UI - swap it for the real stored phone
+    if (finalPhone.includes('*') && customer.realPhone) {
+      finalPhone = customer.realPhone;
+    }
     
     const payload = {
       apiToken: APP_PIN, 
@@ -613,7 +622,7 @@ export default function App() {
       preAssignedId: preAssignedId.trim().toUpperCase(), // Send the mandatory pre-assigned ID separately
       timestamp: getUniformTimestamp(),
       customer: customer.name.trim(),
-      phone: customer.phone.trim(),
+      phone: finalPhone, // Submits full phone number securely
       executive: customer.executive.trim(),
       totalUnits: totals.totalUnits,
       totalAmount: totals.net,
@@ -653,7 +662,7 @@ export default function App() {
     setCart([]); setOrderId(generateOrderId());
     setPreAssignedId(''); // Clear search box
     setLastAutoFilledId(''); // Clear observer tracking
-    setCustomer({ name: '', phone: '', executive: '', discountCode: '' });
+    setCustomer({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
     setShowSummary(false); setIsSaving(false);
     
