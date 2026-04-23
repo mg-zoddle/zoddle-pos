@@ -22,7 +22,7 @@ const ChevronLeft = ({className}) => <Icon className={className}><polyline point
 const ChevronRight = ({className}) => <Icon className={className}><polyline points="9 18 15 12 9 6"/></Icon>;
 const RefreshCw = ({className}) => <Icon className={className}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwBTDf-XDTt9fo4dUli_s0dL7ivT6lW0IE8BbeLZWBCIPM_pwBIsSb_NIK8Lssk9VVJ/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxLev9QXPTqYvchQRvCj9NUUmdzmNP9zNg4Nq2Jeu2MS-UDHFpwuFVLfZfKmCKomvy4/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
