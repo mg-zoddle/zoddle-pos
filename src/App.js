@@ -22,7 +22,7 @@ const ChevronLeft = ({className}) => <Icon className={className}><polyline point
 const ChevronRight = ({className}) => <Icon className={className}><polyline points="9 18 15 12 9 6"/></Icon>;
 const RefreshCw = ({className}) => <Icon className={className}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
 
-const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxLev9QXPTqYvchQRvCj9NUUmdzmNP9zNg4Nq2Jeu2MS-UDHFpwuFVLfZfKmCKomvy4/exec';
+const API_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwBTDf-XDTt9fo4dUli_s0dL7ivT6lW0IE8BbeLZWBCIPM_pwBIsSb_NIK8Lssk9VVJ/exec';
 
 // --- SECURITY CONFIGURATION ---
 const APP_PIN = "1234"; // 🔒 CHANGE THIS to your desired passcode
@@ -112,9 +112,9 @@ export default function App() {
   const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
   const [preAssignedId, setPreAssignedId] = useState(''); // Search box state & final Pre-Assigned ID
   const [lastAutoFilledId, setLastAutoFilledId] = useState(''); // Tracks autofill to prevent overrides
-  // realPhone is added to store the unmasked phone securely in the background
   const [customer, setCustomer] = useState({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
+  const [orderType, setOrderType] = useState('SALE'); // NEW: 'SALE', 'RTO', 'DOL'
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
@@ -176,7 +176,7 @@ export default function App() {
     const cachedDb = localStorage.getItem('zoddle_order_db');
     if (cachedDb) setOrderDatabase(JSON.parse(cachedDb));
 
-    // NEW: Load unsubmitted draft order state
+    // Load unsubmitted draft order state
     const savedDraft = localStorage.getItem('zoddle_draft_order');
     if (savedDraft) {
       const decryptedDraft = decryptData(savedDraft, APP_PIN);
@@ -187,6 +187,7 @@ export default function App() {
         if (decryptedDraft.paymentMethod) setPaymentMethod(decryptedDraft.paymentMethod);
         if (decryptedDraft.orderId) setOrderId(decryptedDraft.orderId);
         if (decryptedDraft.lastAutoFilledId) setLastAutoFilledId(decryptedDraft.lastAutoFilledId);
+        if (decryptedDraft.orderType) setOrderType(decryptedDraft.orderType);
       }
     }
     draftLoaded.current = true;
@@ -198,20 +199,20 @@ export default function App() {
     }
   }, [syncQueue, isAuthenticated]);
 
-  // NEW: Save Draft Order State automatically whenever it changes
+  // Save Draft Order State automatically whenever it changes
   useEffect(() => {
     if (isAuthenticated && draftLoaded.current) {
-      const draft = { cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId };
+      const draft = { cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, orderType };
       localStorage.setItem('zoddle_draft_order', encryptData(draft, APP_PIN));
     }
-  }, [cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, isAuthenticated]);
+  }, [cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, orderType, isAuthenticated]);
 
   const logOrderLocally = (payload, status) => {
     setAuditLog(prev => {
       const newLog = [{
-        id: payload.orderId, // Logs the internal ZORD-xxx ID locally for continuity
+        id: payload.orderId, 
         time: payload.timestamp,
-        name: payload.customer,
+        name: payload.customer || 'No Purchase',
         amount: payload.totalAmount,
         status: status,
         units: payload.totalUnits,
@@ -253,7 +254,6 @@ export default function App() {
         setInventory(data.inventory);
         setDiscountMap(data.discountMap || {});
         
-        // Replaces the local DB entirely with the bottom 50 rows returned by the script
         const freshOrderDb = data.orderDatabase || [];
         setOrderDatabase(freshOrderDb);
         
@@ -279,17 +279,17 @@ export default function App() {
     if (!isSilent) setIsFetching(false);
   };
 
-  // Start data download silently the moment the app loads (even before PIN is entered)
+  // Start data download silently the moment the app loads
   useEffect(() => {
     fetchInventory(true);
   }, []);
 
-  // Background Auto-Refresh every 2 minutes to keep DB fresh seamlessly
+  // Background Auto-Refresh every 2 minutes
   useEffect(() => {
     let interval;
     if (isAuthenticated && isOnline) {
       interval = setInterval(() => {
-        fetchInventory(true); // true = run silently without changing UI banners
+        fetchInventory(true); 
       }, 120000); 
     }
     return () => clearInterval(interval);
@@ -366,25 +366,17 @@ export default function App() {
     
     const searchVal = val.trim().toUpperCase();
     if (!searchVal) {
-      // Clear corresponding customer data if the ID is completely erased
-      setCustomer(prev => ({
-        ...prev,
-        name: '',
-        phone: '',
-        realPhone: '',
-        discountCode: ''
-      }));
-      setLastAutoFilledId(''); // Reset tracking state when cleared
+      setCustomer(prev => ({ ...prev, name: '', phone: '', realPhone: '', discountCode: '' }));
+      setLastAutoFilledId(''); 
       return;
     }
   };
 
-  // Auto-populate effect. Actively listens for late-arriving data from downloads.
+  // Auto-populate effect
   useEffect(() => {
     const searchVal = preAssignedId.trim().toUpperCase();
     if (!searchVal || orderDatabase.length === 0) return;
 
-    // Prevent overwriting manual edits if this ID was already auto-filled successfully
     if (lastAutoFilledId === searchVal) return;
 
     const match = orderDatabase.find(o => String(o.orderId).trim().toUpperCase() === searchVal);
@@ -400,11 +392,9 @@ export default function App() {
         ...prev,
         name: match.name || prev.name,
         phone: maskedPhone || prev.phone,
-        realPhone: match.phone || prev.realPhone, // Keep real unmasked phone secretly stored
+        realPhone: match.phone || prev.realPhone,
         discountCode: match.discountCode || prev.discountCode
       }));
-      
-      // Lock it in so manual overrides aren't erased by future background syncs
       setLastAutoFilledId(searchVal);
     }
   }, [orderDatabase, preAssignedId, lastAutoFilledId]);
@@ -604,32 +594,34 @@ export default function App() {
 
   const totals = calculateTotals();
   
-  // IsReadyToSubmit enforces that the Pre-Assigned ID must be filled out before checking out
-  const isReadyToSubmit = cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '' && preAssignedId.trim() !== '';
+  // Validation adjusts based on whether it is a Sale or an Unsuccessful Session
+  const isReadyToSubmit = orderType === 'SALE'
+    ? (cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '' && preAssignedId.trim() !== '')
+    : (preAssignedId.trim() !== '' && customer.executive.trim() !== '');
 
   const submitOrder = async () => {
     if (isSaving) return;
 
     let finalPhone = customer.phone.trim();
-    // If the phone field contains asterisks, it was masked in the UI - swap it for the real stored phone
     if (finalPhone.includes('*') && customer.realPhone) {
       finalPhone = customer.realPhone;
     }
     
     const payload = {
       apiToken: APP_PIN, 
-      orderId: orderId, // Retain the auto-generated internal ID
-      preAssignedId: preAssignedId.trim().toUpperCase(), // Send the mandatory pre-assigned ID separately
+      orderId: orderId,
+      preAssignedId: preAssignedId.trim().toUpperCase(),
       timestamp: getUniformTimestamp(),
       customer: customer.name.trim(),
-      phone: finalPhone, // Submits full phone number securely
+      phone: finalPhone, 
       executive: customer.executive.trim(),
-      totalUnits: totals.totalUnits,
-      totalAmount: totals.net,
-      discountCode: customer.discountCode.trim().toUpperCase() || "NONE",
-      discountAmount: totals.discount,
-      paymentMethod: paymentMethod,
-      lineItems: cart
+      totalUnits: orderType === 'SALE' ? totals.totalUnits : 0,
+      totalAmount: orderType === 'SALE' ? totals.net : 0,
+      discountCode: orderType === 'SALE' ? (customer.discountCode.trim().toUpperCase() || "NONE") : "NONE",
+      discountAmount: orderType === 'SALE' ? totals.discount : 0,
+      paymentMethod: orderType === 'SALE' ? paymentMethod : "N/A",
+      lineItems: orderType === 'SALE' ? cart : [],
+      orderType: orderType // Passes 'SALE', 'RTO', or 'DOL' to Backend
     };
 
     setIsSaving(true);
@@ -654,19 +646,19 @@ export default function App() {
   };
 
   const finishOrderSubmission = () => {
-    setStatus({ type: 'success', text: 'Order captured & verified successfully!' });
+    setStatus({ type: 'success', text: `${orderType === 'SALE' ? 'Order' : 'Status'} captured successfully!` });
     resetForm();
   };
 
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
-    setPreAssignedId(''); // Clear search box
-    setLastAutoFilledId(''); // Clear observer tracking
+    setPreAssignedId('');
+    setLastAutoFilledId(''); 
     setCustomer({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
+    setOrderType('SALE'); // Reset toggle
     setShowSummary(false); setIsSaving(false);
     
-    // NEW: Clear the unsubmitted draft order from storage
     localStorage.removeItem('zoddle_draft_order');
 
     setTimeout(() => { fetchInventory(false); }, 2000); 
@@ -759,7 +751,6 @@ export default function App() {
           </div>
           <div className="space-y-3">
             
-            {/* Pre-Assigned Search Box - MANDATORY */}
             <div className="mb-3">
                <div className="flex justify-between items-end mb-1">
                  <label className="text-[10px] font-bold text-indigo-400 uppercase">Pre-Assigned Order ID *</label>
@@ -795,7 +786,7 @@ export default function App() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Customer Name</label>
-                <input type="text" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} className="w-full bg-gray-50 border-0 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-pink-200" placeholder="Required" />
+                <input type="text" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} className="w-full bg-gray-50 border-0 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-pink-200" placeholder="Optional for RTO/DOL" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Phone</label>
@@ -804,7 +795,7 @@ export default function App() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Executive</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Executive *</label>
                 <input type="text" value={customer.executive} onChange={e => setCustomer({...customer, executive: e.target.value})} className="w-full bg-gray-50 border-0 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-pink-200" placeholder="Required" />
               </div>
               <div>
@@ -815,163 +806,197 @@ export default function App() {
           </div>
         </section>
 
-        {/* Add Item Form Card */}
-        <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-           <div className="flex justify-between items-center mb-4">
-            <h2 className="font-bold text-gray-700 flex items-center gap-2"><Search className="w-5 h-5 text-pink-500"/> Scan / Add Item</h2>
-            {itemForm.sku && (
-              <span className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase ${isSkuLocked ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                {isSkuLocked ? 'Found' : 'New Entry'}
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <input type="text" value={itemForm.sku} onChange={handleSkuSearch} className="w-full bg-pink-50 border border-pink-100 rounded-xl p-3 font-mono text-lg uppercase focus:ring-2 focus:ring-pink-300" placeholder="Enter SKU ID..." />
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Brand</label>
-                <input type="text" value={itemForm.brand} readOnly={isSkuLocked} onChange={e => setItemForm({...itemForm, brand: e.target.value})} className={`w-full rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100 text-gray-500' : 'bg-gray-50 focus:ring-2 focus:ring-pink-200'}`} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
-                <select value={itemForm.size} disabled={isSkuLocked} onChange={e => setItemForm({...itemForm, size: e.target.value})} className={`w-full rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100 text-gray-500' : 'bg-gray-50 focus:ring-2 focus:ring-pink-200'}`}>
-                    <option value="0-1M">Newborn (0-1M)</option>
-                    <option value="1-3M">1-3M</option>
-                    <option value="3-6M">3-6M</option>
-                    <option value="6-12M">6-12M</option>
-                    <option value="12-18M">12-18M</option>
-                    <option value="18-24M">18-24M</option>
-                    <option value="2-3Y">2-3Y</option>
-                    <option value="3-4Y">3-4Y</option>
-                    <option value="4-5Y">4-5Y</option>
-                    <option value="5-6Y">5-6Y</option>
-                    <option value="6-7Y">6-7Y</option>
-                    <option value="7-8Y">7-8Y</option>
-                    <option value="8-9Y">8-9Y</option>
-                    <option value="9-10Y">9-10Y</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3 items-end">
-              {!isSkuLocked && (
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">MRP</label>
-                  <input type="number" value={itemForm.mrp} onChange={e => setItemForm({...itemForm, mrp: e.target.value})} className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm" placeholder="₹" />
-                </div>
-              )}
-              <div className={isSkuLocked ? "col-span-2" : ""}>
-                <label className="text-[10px] font-bold text-pink-500 uppercase">ZRP Price</label>
-                <input type="number" value={itemForm.zrp} readOnly={isSkuLocked} onChange={e => setItemForm({...itemForm, zrp: e.target.value})} className={`w-full font-bold text-pink-600 rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100' : 'bg-pink-50 ring-1 ring-pink-200'}`} placeholder="₹" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Qty</label>
-                <input 
-                  type="number" 
-                  min="1" 
-                  value={itemForm.units} 
-                  onFocus={e => e.target.select()} 
-                  onChange={e => setItemForm({...itemForm, units: e.target.value === '' ? '' : parseInt(e.target.value)})} 
-                  className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold" 
-                />
-              </div>
-            </div>
-
-            {!isSkuLocked && itemForm.sku && (
-              <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300">
-                <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoUpload} className="hidden" />
-                <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 flex-1 bg-white border border-gray-200 p-2 rounded-lg text-sm text-gray-600 font-medium">
-                  <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo/Gallery'}
-                </button>
-                {itemForm.photoData && <img src={itemForm.photoData} alt="Preview" className="w-10 h-10 object-cover rounded border border-gray-200" />}
-              </div>
-            )}
-
-            {formError && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-xl text-xs font-bold text-center border border-red-200 animate-in fade-in zoom-in duration-300">
-                {formError}
-              </div>
-            )}
-
-            <button onClick={addToCart} className="w-full bg-gray-900 text-white font-bold p-3 rounded-xl shadow-md active:scale-[0.98] transition-transform">
-              Add to Cart
-            </button>
-          </div>
+        {/* --- NEW: SESSION OUTCOME TOGGLE --- */}
+        <section className="bg-white rounded-2xl p-2 shadow-sm border border-gray-100 flex gap-2 mb-4">
+           <button 
+             onClick={() => setOrderType('SALE')} 
+             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'SALE' ? 'bg-pink-600 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+           >
+             Record Sale
+           </button>
+           <button 
+             onClick={() => setOrderType('RTO')} 
+             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'RTO' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+           >
+             No Purchase (RTO)
+           </button>
+           <button 
+             onClick={() => setOrderType('DOL')} 
+             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'DOL' ? 'bg-red-500 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+           >
+             Denied (DOL)
+           </button>
         </section>
 
-        {/* Cart Section */}
-        {cart.length > 0 && (
-          <section className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-             <div className="p-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="font-bold text-gray-700 flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-pink-500"/> Cart Items</h2>
-              <span className="bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full text-xs font-bold">{totals.totalUnits} Units</span>
-            </div>
+        {/* Garment Form and Cart ONLY show for SALES */}
+        {orderType === 'SALE' && (
+          <>
+            <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+               <div className="flex justify-between items-center mb-4">
+                <h2 className="font-bold text-gray-700 flex items-center gap-2"><Search className="w-5 h-5 text-pink-500"/> Scan / Add Item</h2>
+                {itemForm.sku && (
+                  <span className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase ${isSkuLocked ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {isSkuLocked ? 'Found' : 'New Entry'}
+                  </span>
+                )}
+              </div>
 
-            <div className="divide-y divide-gray-100">
-              {cart.map((item, idx) => (
-                <div key={idx} className="p-4 flex gap-3 items-center">
-                  {item.photoData ? (
-                    <img src={item.photoData} className="w-12 h-12 rounded object-cover border bg-gray-100 flex-shrink-0" alt="Item" />
-                  ) : (
-                    <div className="w-12 h-12 rounded bg-gray-100 border flex items-center justify-center text-[8px] text-gray-400 text-center flex-shrink-0">NO IMG</div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start">
-                      <p className="font-mono font-bold text-sm text-gray-900 truncate">{item.sku}</p>
-                      <button onClick={() => removeFromCart(idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                    </div>
-                    <p className="text-[10px] text-gray-500 mt-0.5">{item.brand} • {item.size}</p>
-                    <div className="flex justify-between items-center mt-1">
-                      <p className="text-xs font-medium text-gray-500">{item.units} × ₹{item.zrp}</p>
-                      <p className="text-sm font-bold text-gray-900">₹{(item.units * item.zrp).toFixed(2)}</p>
-                    </div>
+              <div className="space-y-4">
+                <input type="text" value={itemForm.sku} onChange={handleSkuSearch} className="w-full bg-pink-50 border border-pink-100 rounded-xl p-3 font-mono text-lg uppercase focus:ring-2 focus:ring-pink-300" placeholder="Enter SKU ID..." />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Brand</label>
+                    <input type="text" value={itemForm.brand} readOnly={isSkuLocked} onChange={e => setItemForm({...itemForm, brand: e.target.value})} className={`w-full rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100 text-gray-500' : 'bg-gray-50 focus:ring-2 focus:ring-pink-200'}`} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
+                    <select value={itemForm.size} disabled={isSkuLocked} onChange={e => setItemForm({...itemForm, size: e.target.value})} className={`w-full rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100 text-gray-500' : 'bg-gray-50 focus:ring-2 focus:ring-pink-200'}`}>
+                        <option value="0-1M">Newborn (0-1M)</option>
+                        <option value="1-3M">1-3M</option>
+                        <option value="3-6M">3-6M</option>
+                        <option value="6-12M">6-12M</option>
+                        <option value="12-18M">12-18M</option>
+                        <option value="18-24M">18-24M</option>
+                        <option value="2-3Y">2-3Y</option>
+                        <option value="3-4Y">3-4Y</option>
+                        <option value="4-5Y">4-5Y</option>
+                        <option value="5-6Y">5-6Y</option>
+                        <option value="6-7Y">6-7Y</option>
+                        <option value="7-8Y">7-8Y</option>
+                        <option value="8-9Y">8-9Y</option>
+                        <option value="9-10Y">9-10Y</option>
+                    </select>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            {/* Discount Working Display */}
-            {totals.workingText && (
-              <div className="p-4 bg-pink-50/50 border-t border-dashed border-pink-200">
-                <h3 className="text-[10px] font-bold text-pink-700 uppercase mb-2">Discount Calculation Working</h3>
-                <p className="text-xs text-gray-700 whitespace-pre-line leading-relaxed">
-                  {totals.workingText}
-                </p>
+                <div className="grid grid-cols-3 gap-3 items-end">
+                  {!isSkuLocked && (
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">MRP</label>
+                      <input type="number" value={itemForm.mrp} onChange={e => setItemForm({...itemForm, mrp: e.target.value})} className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm" placeholder="₹" />
+                    </div>
+                  )}
+                  <div className={isSkuLocked ? "col-span-2" : ""}>
+                    <label className="text-[10px] font-bold text-pink-500 uppercase">ZRP Price</label>
+                    <input type="number" value={itemForm.zrp} readOnly={isSkuLocked} onChange={e => setItemForm({...itemForm, zrp: e.target.value})} className={`w-full font-bold text-pink-600 rounded-lg p-2 text-sm border-0 ${isSkuLocked ? 'bg-gray-100' : 'bg-pink-50 ring-1 ring-pink-200'}`} placeholder="₹" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Qty</label>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      value={itemForm.units} 
+                      onFocus={e => e.target.select()} 
+                      onChange={e => setItemForm({...itemForm, units: e.target.value === '' ? '' : parseInt(e.target.value)})} 
+                      className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold" 
+                    />
+                  </div>
+                </div>
+
+                {!isSkuLocked && itemForm.sku && (
+                  <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300">
+                    <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoUpload} className="hidden" />
+                    <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 flex-1 bg-white border border-gray-200 p-2 rounded-lg text-sm text-gray-600 font-medium">
+                      <Camera className="w-4 h-4"/> {itemForm.photoData ? 'Change Photo' : 'Take Photo/Gallery'}
+                    </button>
+                    {itemForm.photoData && <img src={itemForm.photoData} alt="Preview" className="w-10 h-10 object-cover rounded border border-gray-200" />}
+                  </div>
+                )}
+
+                {formError && (
+                  <div className="bg-red-50 text-red-600 p-3 rounded-xl text-xs font-bold text-center border border-red-200 animate-in fade-in zoom-in duration-300">
+                    {formError}
+                  </div>
+                )}
+
+                <button onClick={addToCart} className="w-full bg-gray-900 text-white font-bold p-3 rounded-xl shadow-md active:scale-[0.98] transition-transform">
+                  Add to Cart
+                </button>
               </div>
+            </section>
+
+            {cart.length > 0 && (
+              <section className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                 <div className="p-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+                  <h2 className="font-bold text-gray-700 flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-pink-500"/> Cart Items</h2>
+                  <span className="bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full text-xs font-bold">{totals.totalUnits} Units</span>
+                </div>
+
+                <div className="divide-y divide-gray-100">
+                  {cart.map((item, idx) => (
+                    <div key={idx} className="p-4 flex gap-3 items-center">
+                      {item.photoData ? (
+                        <img src={item.photoData} className="w-12 h-12 rounded object-cover border bg-gray-100 flex-shrink-0" alt="Item" />
+                      ) : (
+                        <div className="w-12 h-12 rounded bg-gray-100 border flex items-center justify-center text-[8px] text-gray-400 text-center flex-shrink-0">NO IMG</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start">
+                          <p className="font-mono font-bold text-sm text-gray-900 truncate">{item.sku}</p>
+                          <button onClick={() => removeFromCart(idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-0.5">{item.brand} • {item.size}</p>
+                        <div className="flex justify-between items-center mt-1">
+                          <p className="text-xs font-medium text-gray-500">{item.units} × ₹{item.zrp}</p>
+                          <p className="text-sm font-bold text-gray-900">₹{(item.units * item.zrp).toFixed(2)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {totals.workingText && (
+                  <div className="p-4 bg-pink-50/50 border-t border-dashed border-pink-200">
+                    <h3 className="text-[10px] font-bold text-pink-700 uppercase mb-2">Discount Calculation Working</h3>
+                    <p className="text-xs text-gray-700 whitespace-pre-line leading-relaxed">
+                      {totals.workingText}
+                    </p>
+                  </div>
+                )}
+
+                <div className="p-4 bg-white space-y-2 border-t border-gray-100">
+                  <div className="flex justify-between text-sm text-gray-600"><span>Gross Total</span><span>₹{totals.gross.toFixed(2)}</span></div>
+                  {totals.discount > 0 && (
+                    <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
+                  )}
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                    <span className="font-bold text-gray-800">Final Total</span><span className="text-2xl font-black text-pink-600">₹{totals.net.toFixed(2)}</span>
+                  </div>
+                </div>
+              </section>
             )}
-
-            <div className="p-4 bg-white space-y-2 border-t border-gray-100">
-              <div className="flex justify-between text-sm text-gray-600"><span>Gross Total</span><span>₹{totals.gross.toFixed(2)}</span></div>
-              {totals.discount > 0 && (
-                <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
-              )}
-              <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-                <span className="font-bold text-gray-800">Final Total</span><span className="text-2xl font-black text-pink-600">₹{totals.net.toFixed(2)}</span>
-              </div>
-            </div>
-          </section>
+          </>
         )}
       </div>
 
-      {/* Fixed Bottom Bar for Mobile Checkout */}
+      {/* Dynamic Fixed Bottom Bar */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-40">
         <div className="max-w-4xl mx-auto flex gap-3">
           <div className="flex-1">
-            <p className="text-[10px] text-gray-500 font-bold uppercase">Net Payable</p>
-            <p className="text-xl font-black text-gray-900">₹{totals.net.toFixed(2)}</p>
+            {orderType === 'SALE' ? (
+              <>
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Net Payable</p>
+                <p className="text-xl font-black text-gray-900">₹{totals.net.toFixed(2)}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Selected Action</p>
+                <p className="text-xl font-black text-gray-900">{orderType === 'RTO' ? 'Record RTO' : 'Record DOL'}</p>
+              </>
+            )}
           </div>
           <button 
-            disabled={!isReadyToSubmit} onClick={() => setShowSummary(true)}
-            className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${isReadyToSubmit ? 'bg-pink-600 hover:bg-pink-700 shadow-lg shadow-pink-200' : 'bg-gray-300'}`}
+            disabled={!isReadyToSubmit} 
+            onClick={() => orderType === 'SALE' ? setShowSummary(true) : submitOrder()}
+            className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${isReadyToSubmit ? (orderType === 'SALE' ? 'bg-pink-600 hover:bg-pink-700 shadow-pink-200' : (orderType === 'RTO' ? 'bg-orange-500 shadow-orange-200' : 'bg-red-500 shadow-red-200')) : 'bg-gray-300'}`}
           >
-            Checkout <CheckCircle className="w-5 h-5"/>
+            {orderType === 'SALE' ? 'Checkout' : 'Submit'} <CheckCircle className="w-5 h-5"/>
           </button>
         </div>
       </div>
 
-      {/* Checkout Summary Modal with Invoice View */}
-      {showSummary && (
+      {/* Checkout Summary Modal with Invoice View (ONLY FOR SALES) */}
+      {showSummary && orderType === 'SALE' && (
         <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center">
           <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
             <div className="p-4 border-b flex justify-between items-center bg-gray-50">
@@ -1107,13 +1132,19 @@ export default function App() {
                         <div className="flex justify-between items-center">
                           <span className="font-bold text-sm text-gray-800">{log.name}</span>
                           <div className="flex items-center gap-1">
-                            <span className="font-black text-pink-600">₹{log.amount?.toFixed(2)}</span>
+                            {log.fullDetails?.orderType && log.fullDetails.orderType !== 'SALE' ? (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${log.fullDetails.orderType === 'RTO' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                {log.fullDetails.orderType}
+                              </span>
+                            ) : (
+                              <span className="font-black text-pink-600">₹{log.amount?.toFixed(2)}</span>
+                            )}
                             <ChevronRight className="w-4 h-4 text-gray-400" />
                           </div>
                         </div>
                         <div className="text-[10px] font-medium text-gray-400 flex justify-between">
                           <span>{log.time}</span>
-                          <span>{log.units} Unit(s)</span>
+                          <span>{log.units > 0 ? `${log.units} Unit(s)` : log.fullDetails?.executive || '-'}</span>
                         </div>
                       </div>
                     ))
@@ -1145,48 +1176,62 @@ export default function App() {
                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-sm space-y-2">
                           <div className="flex justify-between text-gray-500"><span>Date:</span> <span className="font-medium text-gray-900">{activeAuditOrder.time}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Pre-Assigned ID:</span> <span className="font-bold text-indigo-600">{activeAuditOrder.fullDetails.preAssignedId || '-'}</span></div>
-                          <div className="flex justify-between text-gray-500"><span>Customer:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.customer}</span></div>
-                          <div className="flex justify-between text-gray-500"><span>Phone:</span> <span className="font-medium text-gray-900">{activeAuditOrder.fullDetails.phone || '-'}</span></div>
+                          <div className="flex justify-between text-gray-500"><span>Customer:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.customer || 'N/A'}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Executive:</span> <span className="font-medium text-gray-900">{activeAuditOrder.fullDetails.executive}</span></div>
-                          <div className="flex justify-between text-gray-500 pt-2 border-t mt-2"><span>Pay Mode:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.paymentMethod}</span></div>
-                          <div className="flex justify-between text-gray-500"><span>Discount Code:</span> <span className="font-bold text-pink-600">{activeAuditOrder.fullDetails.discountCode}</span></div>
+                          
+                          {(!activeAuditOrder.fullDetails.orderType || activeAuditOrder.fullDetails.orderType === 'SALE') && (
+                            <>
+                              <div className="flex justify-between text-gray-500 pt-2 border-t mt-2"><span>Pay Mode:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.paymentMethod}</span></div>
+                              <div className="flex justify-between text-gray-500"><span>Discount Code:</span> <span className="font-bold text-pink-600">{activeAuditOrder.fullDetails.discountCode}</span></div>
+                            </>
+                          )}
                         </div>
 
-                        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
-                            <table className="w-full text-xs">
-                              <thead className="bg-gray-50 text-gray-500">
-                                <tr>
-                                  <th className="p-2 text-left font-medium">Item</th>
-                                  <th className="p-2 text-right font-medium">Price</th>
-                                  <th className="p-2 text-right font-medium">Qty</th>
-                                  <th className="p-2 text-right font-medium">Total</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100">
-                                {activeAuditOrder.fullDetails.lineItems.map((item, idx) => (
-                                  <tr key={idx}>
-                                    <td className="p-2 font-mono font-medium">
-                                      <div className="flex items-center gap-2">
-                                        {item.photoData ? (
-                                          <img src={item.photoData} className="w-8 h-8 rounded object-cover border bg-gray-100 flex-shrink-0" alt="Item" />
-                                        ) : (
-                                          <div className="w-8 h-8 rounded bg-gray-100 border flex items-center justify-center text-[6px] text-gray-400 text-center flex-shrink-0">NO IMG</div>
-                                        )}
-                                        <span>{item.sku}</span>
-                                      </div>
-                                    </td>
-                                    <td className="p-2 text-right">₹{item.zrp}</td>
-                                    <td className="p-2 text-right">{item.units}</td>
-                                    <td className="p-2 text-right font-bold">₹{(item.zrp * item.units).toFixed(2)}</td>
+                        {activeAuditOrder.fullDetails.orderType === 'RTO' || activeAuditOrder.fullDetails.orderType === 'DOL' ? (
+                           <div className="bg-white border border-gray-100 rounded-xl p-6 text-center shadow-sm">
+                             <FileText className={`w-12 h-12 mx-auto mb-3 ${activeAuditOrder.fullDetails.orderType === 'RTO' ? 'text-orange-400' : 'text-red-400'}`} />
+                             <h3 className="text-lg font-bold text-gray-800">
+                               {activeAuditOrder.fullDetails.orderType === 'RTO' ? 'No Customer Purchase (RTO)' : 'Session Denied (DOL)'}
+                             </h3>
+                             <p className="text-sm text-gray-500 mt-1">This session was closed without a sale.</p>
+                          </div>
+                        ) : (
+                          <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                              <table className="w-full text-xs">
+                                <thead className="bg-gray-50 text-gray-500">
+                                  <tr>
+                                    <th className="p-2 text-left font-medium">Item</th>
+                                    <th className="p-2 text-right font-medium">Price</th>
+                                    <th className="p-2 text-right font-medium">Qty</th>
+                                    <th className="p-2 text-right font-medium">Total</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            <div className="p-3 bg-gray-50 border-t border-gray-100 text-sm flex justify-between items-center font-bold text-gray-800">
-                               <span>Net Total ({activeAuditOrder.units} units):</span>
-                               <span className="text-lg text-pink-600">₹{activeAuditOrder.amount.toFixed(2)}</span>
-                            </div>
-                        </div>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {activeAuditOrder.fullDetails.lineItems?.map((item, idx) => (
+                                    <tr key={idx}>
+                                      <td className="p-2 font-mono font-medium">
+                                        <div className="flex items-center gap-2">
+                                          {item.photoData ? (
+                                            <img src={item.photoData} className="w-8 h-8 rounded object-cover border bg-gray-100 flex-shrink-0" alt="Item" />
+                                          ) : (
+                                            <div className="w-8 h-8 rounded bg-gray-100 border flex items-center justify-center text-[6px] text-gray-400 text-center flex-shrink-0">NO IMG</div>
+                                          )}
+                                          <span>{item.sku}</span>
+                                        </div>
+                                      </td>
+                                      <td className="p-2 text-right">₹{item.zrp}</td>
+                                      <td className="p-2 text-right">{item.units}</td>
+                                      <td className="p-2 text-right font-bold">₹{(item.zrp * item.units).toFixed(2)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <div className="p-3 bg-gray-50 border-t border-gray-100 text-sm flex justify-between items-center font-bold text-gray-800">
+                                 <span>Net Total ({activeAuditOrder.units} units):</span>
+                                 <span className="text-lg text-pink-600">₹{activeAuditOrder.amount?.toFixed(2)}</span>
+                              </div>
+                          </div>
+                        )}
                       </div>
                    ) : (
                       <div className="text-center text-gray-400 py-10 flex flex-col items-center">
