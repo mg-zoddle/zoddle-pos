@@ -114,7 +114,7 @@ export default function App() {
   const [lastAutoFilledId, setLastAutoFilledId] = useState(''); // Tracks autofill to prevent overrides
   const [customer, setCustomer] = useState({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
-  const [orderType, setOrderType] = useState('SALE'); // NEW: 'SALE', 'RTO', 'DOL'
+  const [orderType, setOrderType] = useState(null); // NEW: Defaults to null to hide cart initially
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
@@ -656,7 +656,7 @@ export default function App() {
     setLastAutoFilledId(''); 
     setCustomer({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
-    setOrderType('SALE'); // Reset toggle
+    setOrderType(null); // Reset toggle so it hides cart for next order
     setShowSummary(false); setIsSaving(false);
     
     localStorage.removeItem('zoddle_draft_order');
@@ -806,26 +806,32 @@ export default function App() {
           </div>
         </section>
 
-        {/* --- NEW: SESSION OUTCOME TOGGLE --- */}
-        <section className="bg-white rounded-2xl p-2 shadow-sm border border-gray-100 flex gap-2 mb-4">
+        {/* --- NEW PROMINENT OUTCOME SELECTION --- */}
+        <section className="mb-6 space-y-3">
+           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Select Session Outcome *</h3>
            <button 
              onClick={() => setOrderType('SALE')} 
-             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'SALE' ? 'bg-pink-600 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+             className={`w-full p-4 rounded-2xl font-bold border-2 transition-all text-left flex items-center justify-between ${orderType === 'SALE' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-md shadow-pink-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-pink-200'}`}
            >
-             Record Sale
+             <span className="flex items-center gap-3"><ShoppingCart className="w-6 h-6"/> Record Successful Sale</span>
+             {orderType === 'SALE' && <CheckCircle className="w-5 h-5"/>}
            </button>
-           <button 
-             onClick={() => setOrderType('RTO')} 
-             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'RTO' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
-           >
-             No Purchase (RTO)
-           </button>
-           <button 
-             onClick={() => setOrderType('DOL')} 
-             className={`flex-1 py-3 rounded-xl text-[11px] sm:text-xs font-bold transition-all ${orderType === 'DOL' ? 'bg-red-500 text-white shadow-md' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
-           >
-             Denied (DOL)
-           </button>
+           <div className="grid grid-cols-2 gap-3">
+             <button 
+               onClick={() => setOrderType('RTO')} 
+               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'RTO' ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-md shadow-orange-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-orange-200'}`}
+             >
+               <span className="text-2xl mb-1">📦</span>
+               <span className="text-sm">No Purchase<br/>(RTO)</span>
+             </button>
+             <button 
+               onClick={() => setOrderType('DOL')} 
+               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'DOL' ? 'bg-red-50 border-red-500 text-red-700 shadow-md shadow-red-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-red-200'}`}
+             >
+               <span className="text-2xl mb-1">❌</span>
+               <span className="text-[11px] sm:text-xs">Customer Cancelled /<br/>No Response</span>
+             </button>
+           </div>
         </section>
 
         {/* Garment Form and Cart ONLY show for SALES */}
@@ -978,10 +984,15 @@ export default function App() {
                 <p className="text-[10px] text-gray-500 font-bold uppercase">Net Payable</p>
                 <p className="text-xl font-black text-gray-900">₹{totals.net.toFixed(2)}</p>
               </>
-            ) : (
+            ) : orderType ? (
               <>
                 <p className="text-[10px] text-gray-500 font-bold uppercase">Selected Action</p>
-                <p className="text-xl font-black text-gray-900">{orderType === 'RTO' ? 'Record RTO' : 'Record DOL'}</p>
+                <p className="text-xl font-black text-gray-900">{orderType === 'RTO' ? 'Record RTO' : 'Cancelled / No Response'}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Action Required</p>
+                <p className="text-lg font-bold text-gray-400">Select Outcome</p>
               </>
             )}
           </div>
@@ -990,7 +1001,7 @@ export default function App() {
             onClick={() => orderType === 'SALE' ? setShowSummary(true) : submitOrder()}
             className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${isReadyToSubmit ? (orderType === 'SALE' ? 'bg-pink-600 hover:bg-pink-700 shadow-pink-200' : (orderType === 'RTO' ? 'bg-orange-500 shadow-orange-200' : 'bg-red-500 shadow-red-200')) : 'bg-gray-300'}`}
           >
-            {orderType === 'SALE' ? 'Checkout' : 'Submit'} <CheckCircle className="w-5 h-5"/>
+            {orderType === 'SALE' ? 'Checkout' : (orderType ? 'Submit' : 'Select Action')} <CheckCircle className="w-5 h-5"/>
           </button>
         </div>
       </div>
@@ -1191,7 +1202,7 @@ export default function App() {
                            <div className="bg-white border border-gray-100 rounded-xl p-6 text-center shadow-sm">
                              <FileText className={`w-12 h-12 mx-auto mb-3 ${activeAuditOrder.fullDetails.orderType === 'RTO' ? 'text-orange-400' : 'text-red-400'}`} />
                              <h3 className="text-lg font-bold text-gray-800">
-                               {activeAuditOrder.fullDetails.orderType === 'RTO' ? 'No Customer Purchase (RTO)' : 'Session Denied (DOL)'}
+                               {activeAuditOrder.fullDetails.orderType === 'RTO' ? 'No Customer Purchase (RTO)' : 'Customer Cancelled / No Response'}
                              </h3>
                              <p className="text-sm text-gray-500 mt-1">This session was closed without a sale.</p>
                           </div>
