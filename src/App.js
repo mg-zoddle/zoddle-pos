@@ -96,9 +96,10 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [inventory, setInventory] = useState([]);
   const [discountMap, setDiscountMap] = useState({});
-  const [orderDatabase, setOrderDatabase] = useState([]); // Stores auto-fill DB (Last 50)
+  const [discountRules, setDiscountRules] = useState({}); // NEW: Stores Dynamic Rules
+  const [orderDatabase, setOrderDatabase] = useState([]); 
   const [syncQueue, setSyncQueue] = useState([]);
-  const [auditLog, setAuditLog] = useState([]); // Persistent Local Log
+  const [auditLog, setAuditLog] = useState([]); 
   const [status, setStatus] = useState({ type: 'info', text: 'Initializing...' });
   const [isSaving, setIsSaving] = useState(false);
   const [isFetching, setIsFetching] = useState(false); 
@@ -109,12 +110,12 @@ export default function App() {
   const draftLoaded = useRef(false);
 
   // Order Header State
-  const [orderId, setOrderId] = useState(generateOrderId()); // Internal tracking ZORD-xxx ID
-  const [preAssignedId, setPreAssignedId] = useState(''); // Search box state & final Pre-Assigned ID
-  const [lastAutoFilledId, setLastAutoFilledId] = useState(''); // Tracks autofill to prevent overrides
+  const [orderId, setOrderId] = useState(generateOrderId()); 
+  const [preAssignedId, setPreAssignedId] = useState(''); 
+  const [lastAutoFilledId, setLastAutoFilledId] = useState(''); 
   const [customer, setCustomer] = useState({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
-  const [orderType, setOrderType] = useState(null); // NEW: Defaults to null to hide cart initially
+  const [orderType, setOrderType] = useState(null); 
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
@@ -253,12 +254,14 @@ export default function App() {
       if (data && data.inventory) {
         setInventory(data.inventory);
         setDiscountMap(data.discountMap || {});
+        setDiscountRules(data.discountRules || {}); // NEW: Store Dynamic Rules
         
         const freshOrderDb = data.orderDatabase || [];
         setOrderDatabase(freshOrderDb);
         
         localStorage.setItem('zoddle_inventory', JSON.stringify(data.inventory));
         localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
+        localStorage.setItem('zoddle_discount_rules', JSON.stringify(data.discountRules || {})); // NEW: Cache Rules Offline
         localStorage.setItem('zoddle_order_db', JSON.stringify(freshOrderDb));
         
         if (!isSilent) setStatus({ type: 'success', text: 'Data Synced' });
@@ -268,9 +271,11 @@ export default function App() {
     } catch (e) {
       const cachedInv = localStorage.getItem('zoddle_inventory');
       const cachedMap = localStorage.getItem('zoddle_discount_map');
+      const cachedRules = localStorage.getItem('zoddle_discount_rules');
       if (cachedInv) {
         setInventory(JSON.parse(cachedInv));
         if (cachedMap) setDiscountMap(JSON.parse(cachedMap));
+        if (cachedRules) setDiscountRules(JSON.parse(cachedRules)); // Load Offline Rules
         if (!isSilent) setStatus({ type: 'warning', text: 'Offline Mode: Using cached data' });
       } else {
         if (!isSilent) setStatus({ type: 'error', text: 'Offline Mode: No data cached' });
@@ -462,6 +467,7 @@ export default function App() {
     let code = ""; 
     let mapNote = "";
 
+    // Step 1: Map the entered code to a Base Code (Alias Management)
     if (enteredCode) {
       const safeMap = {};
       Object.keys(discountMap || {}).forEach(k => {
@@ -474,121 +480,89 @@ export default function App() {
           mapNote = ` (Mapped to base code: ${code})`;
         }
       } else if (Object.keys(safeMap).length === 0) {
-        code = enteredCode;
+        code = enteredCode; // If offline/map didn't load, attempt direct
       } else {
         code = "INVALID"; 
       }
     }
 
-    if (code === 'ZODDLE') {
-      let pct = 0.10;
-      let logicText = "Total units ≤ 3 (10% off)";
-      
-      if (totalUnits >= 8) {
-        pct = 0.30;
-        logicText = "Total units ≥ 8 (30% off)";
-      } else if (totalUnits > 3) {
-        pct = 0.20;
-        logicText = "Total units 4-7 (20% off)";
+    // Step 2: NEW DYNAMIC RULE ENGINE
+    if (code && code !== "INVALID" && discountRules[code] && discountRules[code].length > 0) {
+      const rulesForCode = discountRules[code];
+      let activeRule = null;
+      let itemsInCart = cart.reduce((sum, item) => sum + item.units, 0);
+
+      // Arrays are sorted by backend (Threshold Descending). First match is the highest qualifying tier!
+      for (let rule of rulesForCode) {
+        if (rule.type === 'CASH_THRESHOLD' && gross >= rule.threshold) { activeRule = rule; break; }
+        if (rule.type === 'PCT_UNIT_TIER' && itemsInCart >= rule.threshold) { activeRule = rule; break; }
+        if (rule.type === 'BUY_X_GET_Y' && itemsInCart >= (rule.buyX + rule.getY)) { activeRule = rule; break; }
       }
-      
-      discount = gross * pct;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD30') {
-      discount = gross * 0.30;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 30% discount on cart.\n• Calculation: ₹${gross.toFixed(2)} × 30% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD200') {
-      let baseDisc = 200;
-      let extraDisc = 0;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Base Discount: ₹200 flat off.`;
-      if (totalUnits >= 4) {
-          extraDisc = (gross - baseDisc) * 0.10;
-          workingText += `\n• Extra Discount: Cart has 4+ items. Additional 10% off remaining total.\n• Calculation: (₹${gross.toFixed(2)} - ₹200) × 10% = ₹${extraDisc.toFixed(2)}`;
-      }
-      discount = baseDisc + extraDisc;
-      workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
-    } else if (code === 'B2G1') {
-      let flatList = [];
-      cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
-      flatList.sort((a, b) => b - a);
-      if (flatList.length >= 3) {
-        const freeItem = flatList[2];
-        discount += freeItem;
-        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Buy 2 Get 1 Free (cheapest of top 3 is free).\n• Free Item Value: ₹${freeItem.toFixed(2)}`;
-        if (flatList.length >= 4) {
-          let addl = flatList.slice(3).reduce((a, b) => a + (b * 0.10), 0);
-          discount += addl;
-          workingText += `\n• Logic: 10% flat discount on 4th item onwards.\n• Calculation: Remaining ₹${(flatList.slice(3).reduce((a,b)=>a+b,0)).toFixed(2)} × 10% = ₹${addl.toFixed(2)}`;
+
+      if (activeRule) {
+        try {
+          if (activeRule.type === 'CASH_THRESHOLD') {
+            discount = activeRule.discountValue;
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `₹${activeRule.discountValue} flat off`}`;
+          } 
+          else if (activeRule.type === 'PCT_UNIT_TIER') {
+            discount = gross * activeRule.discountValue; 
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${activeRule.discountValue * 100}% off applied`}`;
+          } 
+          else if (activeRule.type === 'BUY_X_GET_Y') {
+            // Flatten and sort cart by price (highest to lowest)
+            let flatList = [];
+            cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
+            flatList.sort((a, b) => b - a);
+
+            let itemsNeeded = activeRule.buyX + activeRule.getY;
+            let freeValue = 0;
+            
+            // Extract the 'Y' free items immediately after the 'X' paid items
+            for(let y = 0; y < activeRule.getY; y++) {
+                 if (flatList[activeRule.buyX + y]) {
+                     freeValue += flatList[activeRule.buyX + y];
+                 }
+            }
+            discount = freeValue;
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `Buy ${activeRule.buyX} Get ${activeRule.getY} Free`}\n• Free Item(s) Value: ₹${freeValue.toFixed(2)}`;
+
+            // Optional: Flat discount on remaining items beyond X+Y
+            if (activeRule.extraPct > 0 && flatList.length > itemsNeeded) {
+                let extraValue = flatList.slice(itemsNeeded).reduce((a,b)=>a+b,0);
+                let extraDiscount = extraValue * activeRule.extraPct;
+                discount += extraDiscount;
+                workingText += `\n• Extra ${activeRule.extraPct * 100}% off remaining items: ₹${extraDiscount.toFixed(2)}`;
+            }
+          }
+
+          // Safety Enforcement: Max Cap Check
+          if (activeRule.maxCap && discount > activeRule.maxCap) {
+             discount = activeRule.maxCap;
+             workingText += `\n• Cap reached: Maximum allowed discount is ₹${activeRule.maxCap}`;
+          }
+          workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
+
+        } catch (err) {
+          discount = 0;
+          workingText = `• Config error in code ${code}: ${err.message}`;
         }
       } else {
-        workingText = `• Code ${enteredCode}${mapNote}: Minimum 3 items required in cart.`;
+         // Determine reason for failure based on the lowest tier
+         const lowestTier = rulesForCode[rulesForCode.length - 1];
+         let reason = "conditions not met";
+         if (lowestTier.type === 'CASH_THRESHOLD') reason = `Minimum cart value of ₹${lowestTier.threshold} required`;
+         if (lowestTier.type === 'PCT_UNIT_TIER') reason = `Minimum ${lowestTier.threshold} items required`;
+         if (lowestTier.type === 'BUY_X_GET_Y') reason = `Minimum ${lowestTier.buyX + lowestTier.getY} items required`;
+         workingText = `• Code ${enteredCode}${mapNote}: ${reason}.`;
       }
-    } else if (code === 'B3G1') {
-      let flatList = [];
-      cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
-      flatList.sort((a, b) => b - a);
-      if (flatList.length >= 4) {
-        const discountedItemValue = flatList[3] - 1; 
-        discount += discountedItemValue;
-        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Buy 3 Get 1 at ₹1 (4th highest is ₹1).\n• 4th Item Discount: ₹${discountedItemValue.toFixed(2)}`;
-        if (flatList.length >= 5) {
-          let addl = flatList.slice(4).reduce((a, b) => a + (b * 0.10), 0);
-          discount += addl;
-          workingText += `\n• Logic: 10% flat discount on 5th item onwards.\n• Calculation: Remaining ₹${(flatList.slice(4).reduce((a,b)=>a+b,0)).toFixed(2)} × 10% = ₹${addl.toFixed(2)}`;
-        }
-      } else {
-        discount = gross * 0.10;
-        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Fewer than 4 items. Flat 10% discount applied.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
-      }
-    } else if (code === 'ZODREPEAT') {
-      let pct = 0.20;
-      let logicText = "Total units ≤ 3 (20% off)";
-      if (totalUnits >= 4) {
-        pct = 0.30;
-        logicText = "Total units ≥ 4 (30% off)";
-      }
-      discount = gross * pct;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'REFZOD') {
-      let pct = 0.15;
-      let logicText = "Total units ≤ 3 (15% off)";
-      if (totalUnits >= 4) {
-        pct = 0.25;
-        logicText = "Total units ≥ 4 (25% off)";
-      }
-      discount = gross * pct;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${logicText}\n• Calculation: ₹${gross.toFixed(2)} × ${pct*100}% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD500') {
-      if (gross > 1000) {
-        discount = 500 + (Math.floor((gross - 1000) / 1000) * 200);
-        discount = Math.min(discount, 2000);
-        workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ₹500 off base (>₹1000) + ₹200 per subsequent full ₹1000 (Max ₹2000).\n• Calculation Total: ₹${discount.toFixed(2)}`;
-      } else {
-        workingText = `• Code ${enteredCode}${mapNote}: Gross total must be above ₹1000.`;
-      }
-    } else if (code === 'ZODR200') {
-      discount = 200;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹200 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZODR100') {
-      discount = 100;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹100 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZODR50') {
-      discount = 50;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat ₹50 off.\n• Total Saving: ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD5P') {
-      discount = gross * 0.05;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 5% discount.\n• Calculation: ₹${gross.toFixed(2)} × 5% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD10P') {
-      discount = gross * 0.10;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 10% discount.\n• Calculation: ₹${gross.toFixed(2)} × 10% = ₹${discount.toFixed(2)}`;
-    } else if (code === 'ZOD15P') {
-      discount = gross * 0.15;
-      workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: Flat 15% discount.\n• Calculation: ₹${gross.toFixed(2)} × 15% = ₹${discount.toFixed(2)}`;
+    } else if (code === 'INVALID') {
+      workingText = `• Discount code entered but not recognized or is inactive.`;
     } else if (enteredCode) {
-       workingText = `• Discount code entered but not recognized or is inactive.`;
+      workingText = `• Discount code entered but no active rule is defined for it.`;
     }
 
-    discount = Math.min(discount, gross);
+    discount = Math.min(discount, gross); // Absolute safety constraint
     return { gross, discount, totalUnits, net: gross - discount, workingText };
   };
 
@@ -621,7 +595,7 @@ export default function App() {
       discountAmount: orderType === 'SALE' ? totals.discount : 0,
       paymentMethod: orderType === 'SALE' ? paymentMethod : "N/A",
       lineItems: orderType === 'SALE' ? cart : [],
-      orderType: orderType // Passes 'SALE', 'RTO', or 'DOL' to Backend
+      orderType: orderType 
     };
 
     setIsSaving(true);
@@ -656,7 +630,7 @@ export default function App() {
     setLastAutoFilledId(''); 
     setCustomer({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
     setPaymentMethod('Online'); 
-    setOrderType(null); // Reset toggle so it hides cart for next order
+    setOrderType(null); 
     setShowSummary(false); setIsSaving(false);
     
     localStorage.removeItem('zoddle_draft_order');
