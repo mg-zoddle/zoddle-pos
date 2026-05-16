@@ -74,13 +74,21 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // 800px max width
-        const scaleSize = MAX_WIDTH / img.width;
-        canvas.width = MAX_WIDTH;
-        canvas.height = img.height * scaleSize;
+        const MAX_WIDTH = 400; // Reduced from 800px to 400px for much easier storage
+        let newWidth = img.width;
+        let newHeight = img.height;
+        
+        // Prevent upscaling: only shrink if the image is wider than MAX_WIDTH
+        if (img.width > MAX_WIDTH) {
+          newWidth = MAX_WIDTH;
+          newHeight = (img.height * MAX_WIDTH) / img.width;
+        }
+        
+        canvas.width = newWidth;
+        canvas.height = newHeight;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.6));
+        resolve(canvas.toDataURL('image/jpeg', 0.5)); // Reduced quality from 0.6 to 0.5
       };
     };
   });
@@ -196,15 +204,25 @@ export default function App() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      localStorage.setItem('zoddle_secure_queue', encryptData(syncQueue, APP_PIN));
+      try {
+        localStorage.setItem('zoddle_secure_queue', encryptData(syncQueue, APP_PIN));
+      } catch (e) {
+        console.error("Failed to save offline queue", e);
+      }
     }
   }, [syncQueue, isAuthenticated]);
 
   // Save Draft Order State automatically whenever it changes
   useEffect(() => {
     if (isAuthenticated && draftLoaded.current) {
-      const draft = { cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, orderType };
-      localStorage.setItem('zoddle_draft_order', encryptData(draft, APP_PIN));
+      // Strip massive photo strings from the draft to prevent Quota errors and heavy UI-blocking encryption loops
+      const lightweightCart = cart.map(item => ({ ...item, photoData: null }));
+      const draft = { cart: lightweightCart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, orderType };
+      try {
+        localStorage.setItem('zoddle_draft_order', encryptData(draft, APP_PIN));
+      } catch (e) {
+        console.error("Failed to save draft", e);
+      }
     }
   }, [cart, customer, preAssignedId, paymentMethod, orderId, lastAutoFilledId, orderType, isAuthenticated]);
 
