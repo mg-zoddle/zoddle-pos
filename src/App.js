@@ -814,14 +814,14 @@ export default function App() {
                className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'RTO' ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-md shadow-orange-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-orange-200'}`}
              >
                <span className="text-2xl mb-1">📦</span>
-               <span className="text-sm">No Purchase<br/>(RTO)</span>
+               <span className="text-sm">RTO</span>
              </button>
              <button 
                onClick={() => setOrderType('DOL')} 
                className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'DOL' ? 'bg-red-50 border-red-500 text-red-700 shadow-md shadow-red-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-red-200'}`}
              >
                <span className="text-2xl mb-1">❌</span>
-               <span className="text-[11px] sm:text-xs">Customer Cancelled /<br/>No Response</span>
+               <span className="text-[11px] sm:text-xs">DOL</span>
              </button>
            </div>
         </section>
