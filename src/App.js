@@ -979,7 +979,7 @@ export default function App() {
             ) : orderType ? (
               <>
                 <p className="text-[10px] text-gray-500 font-bold uppercase">Selected Action</p>
-                <p className="text-xl font-black text-gray-900">{orderType === 'RTO' ? 'Record RTO' : 'Cancelled / No Response'}</p>
+                <p className="text-xl font-black text-gray-900">{orderType === 'RTO' ? 'RTO' : 'DOL'}</p>
               </>
             ) : (
               <>
