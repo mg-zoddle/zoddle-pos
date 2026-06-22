@@ -231,7 +231,7 @@ export default function App() {
       const newLog = [{
         id: payload.orderId, 
         time: payload.timestamp,
-        name: payload.customer || 'No Purchase',
+        name: payload.customer || 'RTO',
         amount: payload.totalAmount,
         status: status,
         units: payload.totalUnits,
@@ -1194,7 +1194,7 @@ export default function App() {
                            <div className="bg-white border border-gray-100 rounded-xl p-6 text-center shadow-sm">
                              <FileText className={`w-12 h-12 mx-auto mb-3 ${activeAuditOrder.fullDetails.orderType === 'RTO' ? 'text-orange-400' : 'text-red-400'}`} />
                              <h3 className="text-lg font-bold text-gray-800">
-                               {activeAuditOrder.fullDetails.orderType === 'RTO' ? 'No Customer Purchase (RTO)' : 'Customer Cancelled / No Response'}
+                               {activeAuditOrder.fullDetails.orderType === 'RTO' ? 'No Customer Purchase (RTO)' : 'DOL'}
                              </h3>
                              <p className="text-sm text-gray-500 mt-1">This session was closed without a sale.</p>
                           </div>
