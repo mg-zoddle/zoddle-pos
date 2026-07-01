@@ -1084,7 +1084,7 @@ export default function App() {
               {paymentMethod === 'Online' && (
                 <div className="flex flex-col items-center p-4 border-2 border-dashed border-pink-100 bg-pink-50/50 rounded-2xl animate-in fade-in zoom-in duration-300">
                   <p className="text-xs font-bold text-pink-700 uppercase tracking-wider mb-2">Scan to Pay</p>
-                  <img src="https://cdn.shopify.com/s/files/1/0924/1041/3419/files/Zoddle_-_QR_Code.png?v=1771588559" alt="UPI QR" className="w-40 h-40 rounded-xl shadow-sm mix-blend-multiply" />
+                  <img src="https://res.cloudinary.com/dxy6fdqsa/image/upload/bank-qr/icici-qr.png" alt="UPI QR" className="w-40 h-40 rounded-xl shadow-sm mix-blend-multiply" />
                 </div>
               )}
             </div>
