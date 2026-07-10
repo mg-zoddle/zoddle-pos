@@ -475,7 +475,7 @@ export default function App() {
 
   const removeFromCart = (index) => setCart(cart.filter((_, i) => i !== index));
 
-  const calculateTotals = () => {
+   const calculateTotals = () => {
     const gross = cart.reduce((sum, item) => sum + (item.zrp * item.units), 0);
     const totalUnits = cart.reduce((sum, item) => sum + item.units, 0);
     let discount = 0;
@@ -504,10 +504,14 @@ export default function App() {
       }
     }
 
-    // Step 2: NEW DYNAMIC RULE ENGINE
+    // Step 2: DYNAMIC RULE ENGINE (Base Discount)
+    let activeRule = null;
+    let baseDiscount = 0;
+    let isPercentageDiscount = false;
+    let percentageValue = 0;
+
     if (code && code !== "INVALID" && discountRules[code] && discountRules[code].length > 0) {
       const rulesForCode = discountRules[code];
-      let activeRule = null;
       let itemsInCart = cart.reduce((sum, item) => sum + item.units, 0);
 
       // Arrays are sorted by backend (Threshold Descending). First match is the highest qualifying tier!
@@ -520,12 +524,14 @@ export default function App() {
       if (activeRule) {
         try {
           if (activeRule.type === 'CASH_THRESHOLD') {
-            discount = activeRule.discountValue;
+            baseDiscount = activeRule.discountValue;
             workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `₹${activeRule.discountValue} flat off`}`;
           } 
           else if (activeRule.type === 'PCT_UNIT_TIER') {
-            discount = gross * activeRule.discountValue; 
-            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${activeRule.discountValue * 100}% off applied`}`;
+            isPercentageDiscount = true;
+            percentageValue = activeRule.discountValue; // e.g., 0.10 for 10%
+            baseDiscount = gross * percentageValue; 
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${percentageValue * 100}% off applied`}`;
           } 
           else if (activeRule.type === 'BUY_X_GET_Y') {
             // Flatten and sort cart by price (highest to lowest)
@@ -537,32 +543,31 @@ export default function App() {
             let freeValue = 0;
             
             // Extract the 'Y' free items immediately after the 'X' paid items
-            for(let y = 0; y < activeRule.getY; y++) {
+            for (let y = 0; y < activeRule.getY; y++) {
                  if (flatList[activeRule.buyX + y]) {
                      freeValue += flatList[activeRule.buyX + y];
                  }
             }
-            discount = freeValue;
+            baseDiscount = freeValue;
             workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `Buy ${activeRule.buyX} Get ${activeRule.getY} Free`}\n• Free Item(s) Value: ₹${freeValue.toFixed(2)}`;
 
             // Optional: Flat discount on remaining items beyond X+Y
             if (activeRule.extraPct > 0 && flatList.length > itemsNeeded) {
-                let extraValue = flatList.slice(itemsNeeded).reduce((a,b)=>a+b,0);
+                let extraValue = flatList.slice(itemsNeeded).reduce((a, b) => a + b, 0);
                 let extraDiscount = extraValue * activeRule.extraPct;
-                discount += extraDiscount;
+                baseDiscount += extraDiscount;
                 workingText += `\n• Extra ${activeRule.extraPct * 100}% off remaining items: ₹${extraDiscount.toFixed(2)}`;
             }
           }
 
-          // Safety Enforcement: Max Cap Check
-          if (activeRule.maxCap && discount > activeRule.maxCap) {
-             discount = activeRule.maxCap;
-             workingText += `\n• Cap reached: Maximum allowed discount is ₹${activeRule.maxCap}`;
+          // Safety Enforcement: Apply promo cap strictly to base discount only (excluding the 5% automatic discount)
+          if (activeRule.maxCap && baseDiscount > activeRule.maxCap) {
+             baseDiscount = activeRule.maxCap;
+             workingText += `\n• Cap reached: Maximum allowed base code discount is ₹${activeRule.maxCap}`;
           }
-          workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
 
         } catch (err) {
-          discount = 0;
+          baseDiscount = 0;
           workingText = `• Config error in code ${code}: ${err.message}`;
         }
       } else {
@@ -580,9 +585,36 @@ export default function App() {
       workingText = `• Discount code entered but no active rule is defined for it.`;
     }
 
-    discount = Math.min(discount, gross); // Absolute safety constraint
+    // Step 3: APPLY THE AUTOMATIC 4+ UNITS ADDITIONAL DISCOUNT
+    let extraDiscount = 0;
+    if (totalUnits >= 4) {
+      // Calculate 5% on the gross total
+      extraDiscount = gross * 0.05;
+      
+      if (activeRule && activeRule.type === 'PCT_UNIT_TIER') {
+        // Percentage-based code: Combine visually to represent added percentage points (e.g., 10% + 5% = 15%)
+        const combinedPercentage = (percentageValue + 0.05) * 100;
+        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off applied (Total: ${combinedPercentage}%).`;
+      } else if (activeRule) {
+        // Cash-based code / Buy X Get Y: Apply 5% off gross on top of the capped code discount
+        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off gross (₹${extraDiscount.toFixed(2)}) applied on top of code discount (Exempt from cap).`;
+      } else {
+        // No discount code applied: Grant an automatic 5% off gross
+        workingText = `• 🛍️ 4+ items purchased! Automatically applied 5% discount (₹${extraDiscount.toFixed(2)}).`;
+      }
+    }
+
+    // Combine base coupon discount (capped if applicable) with the automatic 5% extra discount (uncapped)
+    discount = baseDiscount + extraDiscount;
+
+    discount = Math.min(discount, gross); // Absolute safety ceiling
+    if (discount > 0) {
+      workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
+    }
+    
     return { gross, discount, totalUnits, net: gross - discount, workingText };
   };
+
 
   const totals = calculateTotals();
   
