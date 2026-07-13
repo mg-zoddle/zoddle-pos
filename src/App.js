@@ -126,7 +126,7 @@ export default function App() {
   const [orderType, setOrderType] = useState(null); 
 
   // Current Item Form State
-  const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
+  const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null, onSale: false });
   const [isSkuLocked, setIsSkuLocked] = useState(false);
   const [formError, setFormError] = useState("");
   const fileInputRef = useRef(null);
@@ -426,7 +426,7 @@ export default function App() {
     const sku = e.target.value.toUpperCase();
     setFormError(""); 
     if (!sku) {
-      setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null }));
+      setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null, onSale: false }));
       setIsSkuLocked(false);
       return;
     }
@@ -434,13 +434,13 @@ export default function App() {
     const match = inventory.find(i => i.sku?.toString().toUpperCase() === sku);
     if (match) {
       setItemForm(prev => ({
-        ...prev, sku, brand: match.brand || '', size: match.size || '0-1M', gender: match.gender || '', mrp: match.mrp || '', zrp: match.zrp || '', photoData: null
+        ...prev, sku, brand: match.brand || '', size: match.size || '0-1M', gender: match.gender || '', mrp: match.mrp || '', zrp: match.zrp || '', photoData: null, onSale: match.onSale === true
       }));
       setIsSkuLocked(true);
     } else {
-      setItemForm(prev => ({ ...prev, sku }));
+      setItemForm(prev => ({ ...prev, sku, onSale: false }));
       if (isSkuLocked) {
-        setItemForm(prev => ({ ...prev, brand: '', mrp: '', zrp: '', photoData: null }));
+        setItemForm(prev => ({ ...prev, brand: '', mrp: '', zrp: '', photoData: null, onSale: false }));
         setIsSkuLocked(false);
       }
     }
@@ -469,14 +469,20 @@ export default function App() {
 
     setFormError(""); 
     setCart([...cart, { ...itemForm, units: finalUnits, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
-    setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null });
+    setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null, onSale: false });
     setIsSkuLocked(false);
   };
 
   const removeFromCart = (index) => setCart(cart.filter((_, i) => i !== index));
 
-   const calculateTotals = () => {
+  const calculateTotals = () => {
     const gross = cart.reduce((sum, item) => sum + (item.zrp * item.units), 0);
+    
+    // Subtotal of ONLY regular items (NOT on sale)
+    const nonSaleGross = cart.reduce((sum, item) => {
+      return sum + (item.onSale === true ? 0 : (item.zrp * item.units));
+    }, 0);
+
     const totalUnits = cart.reduce((sum, item) => sum + item.units, 0);
     let discount = 0;
     let workingText = "";
@@ -504,19 +510,18 @@ export default function App() {
       }
     }
 
-    // Step 2: DYNAMIC RULE ENGINE (Base Discount)
-    let activeRule = null;
+    // Step 2: DYNAMIC RULE ENGINE
     let baseDiscount = 0;
-    let isPercentageDiscount = false;
+    let activeRule = null;
     let percentageValue = 0;
 
     if (code && code !== "INVALID" && discountRules[code] && discountRules[code].length > 0) {
       const rulesForCode = discountRules[code];
-      let itemsInCart = cart.reduce((sum, item) => sum + item.units, 0);
+      let itemsInCart = totalUnits; // All items in cart count toward unit threshold
 
       // Arrays are sorted by backend (Threshold Descending). First match is the highest qualifying tier!
       for (let rule of rulesForCode) {
-        if (rule.type === 'CASH_THRESHOLD' && gross >= rule.threshold) { activeRule = rule; break; }
+        if (rule.type === 'CASH_THRESHOLD' && nonSaleGross >= rule.threshold) { activeRule = rule; break; }
         if (rule.type === 'PCT_UNIT_TIER' && itemsInCart >= rule.threshold) { activeRule = rule; break; }
         if (rule.type === 'BUY_X_GET_Y' && itemsInCart >= (rule.buyX + rule.getY)) { activeRule = rule; break; }
       }
@@ -524,43 +529,73 @@ export default function App() {
       if (activeRule) {
         try {
           if (activeRule.type === 'CASH_THRESHOLD') {
-            baseDiscount = activeRule.discountValue;
+            baseDiscount = Math.min(activeRule.discountValue, nonSaleGross);
             workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `₹${activeRule.discountValue} flat off`}`;
+            if (activeRule.discountValue > nonSaleGross) {
+              workingText += `\n• Notice: Cash discount capped to regular items subtotal (₹${nonSaleGross.toFixed(2)}).`;
+            }
           } 
           else if (activeRule.type === 'PCT_UNIT_TIER') {
-            isPercentageDiscount = true;
-            percentageValue = activeRule.discountValue; // e.g., 0.10 for 10%
-            baseDiscount = gross * percentageValue; 
-            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${percentageValue * 100}% off applied`}`;
+            percentageValue = activeRule.discountValue; 
+            baseDiscount = nonSaleGross * percentageValue; 
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${percentageValue * 100}% off applied`}\n• Applied on Regular Items: ₹${nonSaleGross.toFixed(2)} (Excludes sale items)`;
           } 
           else if (activeRule.type === 'BUY_X_GET_Y') {
             // Flatten and sort cart by price (highest to lowest)
             let flatList = [];
-            cart.forEach(i => { for (let u = 0; u < i.units; u++) flatList.push(i.zrp); });
-            flatList.sort((a, b) => b - a);
+            cart.forEach(i => {
+              for (let u = 0; u < i.units; u++) {
+                flatList.push({ zrp: i.zrp, onSale: i.onSale === true });
+              }
+            });
+            flatList.sort((a, b) => b.zrp - a.zrp);
 
-            let itemsNeeded = activeRule.buyX + activeRule.getY;
+            let buyXCount = 0;
+            let freeYCount = 0;
             let freeValue = 0;
             
             // Extract the 'Y' free items immediately after the 'X' paid items
-            for (let y = 0; y < activeRule.getY; y++) {
-                 if (flatList[activeRule.buyX + y]) {
-                     freeValue += flatList[activeRule.buyX + y];
-                 }
+            for (let i = 0; i < flatList.length; i++) {
+              let item = flatList[i];
+              if (buyXCount < activeRule.buyX) {
+                buyXCount++;
+              } else if (freeYCount < activeRule.getY) {
+                if (!item.onSale) {
+                  freeValue += item.zrp;
+                  freeYCount++;
+                }
+              }
             }
+
             baseDiscount = freeValue;
-            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `Buy ${activeRule.buyX} Get ${activeRule.getY} Free`}\n• Free Item(s) Value: ₹${freeValue.toFixed(2)}`;
+            workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `Buy ${activeRule.buyX} Get ${activeRule.getY} Free`}\n• Free Item(s) Value: ₹${freeValue.toFixed(2)} (Excludes sale items from free pool)`;
 
             // Optional: Flat discount on remaining items beyond X+Y
-            if (activeRule.extraPct > 0 && flatList.length > itemsNeeded) {
-                let extraValue = flatList.slice(itemsNeeded).reduce((a, b) => a + b, 0);
+            if (activeRule.extraPct > 0 && flatList.length > (activeRule.buyX + activeRule.getY)) {
+                let extraValue = 0;
+                let paidCount = 0;
+                let freeCount = 0;
+                for (let i = 0; i < flatList.length; i++) {
+                  let item = flatList[i];
+                  if (paidCount < activeRule.buyX) {
+                    paidCount++;
+                  } else if (freeCount < activeRule.getY) {
+                    if (!item.onSale) {
+                      freeCount++;
+                    }
+                  } else {
+                    if (!item.onSale) {
+                      extraValue += item.zrp;
+                    }
+                  }
+                }
                 let extraDiscount = extraValue * activeRule.extraPct;
                 baseDiscount += extraDiscount;
-                workingText += `\n• Extra ${activeRule.extraPct * 100}% off remaining items: ₹${extraDiscount.toFixed(2)}`;
+                workingText += `\n• Extra ${activeRule.extraPct * 100}% off remaining regular items: ₹${extraDiscount.toFixed(2)}`;
             }
           }
 
-          // Safety Enforcement: Apply promo cap strictly to base discount only (excluding the 5% automatic discount)
+          // Safety Enforcement: Max Cap Check
           if (activeRule.maxCap && baseDiscount > activeRule.maxCap) {
              baseDiscount = activeRule.maxCap;
              workingText += `\n• Cap reached: Maximum allowed base code discount is ₹${activeRule.maxCap}`;
@@ -574,9 +609,9 @@ export default function App() {
          // Determine reason for failure based on the lowest tier
          const lowestTier = rulesForCode[rulesForCode.length - 1];
          let reason = "conditions not met";
-         if (lowestTier.type === 'CASH_THRESHOLD') reason = `Minimum cart value of ₹${lowestTier.threshold} required`;
-         if (lowestTier.type === 'PCT_UNIT_TIER') reason = `Minimum ${lowestTier.threshold} items required`;
-         if (lowestTier.type === 'BUY_X_GET_Y') reason = `Minimum ${lowestTier.buyX + lowestTier.getY} items required`;
+         if (lowestTier.type === 'CASH_THRESHOLD') reason = `Minimum regular items value of ₹${lowestTier.threshold} required`;
+         if (lowestTier.type === 'PCT_UNIT_TIER') reason = `Minimum ${lowestTier.threshold} total items required`;
+         if (lowestTier.type === 'BUY_X_GET_Y') reason = `Minimum ${lowestTier.buyX + lowestTier.getY} total items required`;
          workingText = `• Code ${enteredCode}${mapNote}: ${reason}.`;
       }
     } else if (code === 'INVALID') {
@@ -588,33 +623,28 @@ export default function App() {
     // Step 3: APPLY THE AUTOMATIC 4+ UNITS ADDITIONAL DISCOUNT
     let extraDiscount = 0;
     if (totalUnits >= 4) {
-      // Calculate 5% on the gross total
-      extraDiscount = gross * 0.05;
+      extraDiscount = nonSaleGross * 0.05;
       
       if (activeRule && activeRule.type === 'PCT_UNIT_TIER') {
-        // Percentage-based code: Combine visually to represent added percentage points (e.g., 10% + 5% = 15%)
         const combinedPercentage = (percentageValue + 0.05) * 100;
-        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off applied (Total: ${combinedPercentage}%).`;
+        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off applied to regular items (Total: ${combinedPercentage}%).`;
       } else if (activeRule) {
-        // Cash-based code / Buy X Get Y: Apply 5% off gross on top of the capped code discount
-        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off gross (₹${extraDiscount.toFixed(2)}) applied on top of code discount (Exempt from cap).`;
+        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off regular items (₹${extraDiscount.toFixed(2)}) applied on top of code discount (Exempt from cap).`;
       } else {
-        // No discount code applied: Grant an automatic 5% off gross
-        workingText = `• 🛍️ 4+ items purchased! Automatically applied 5% discount (₹${extraDiscount.toFixed(2)}).`;
+        workingText = `• 🛍️ 4+ items purchased! Automatically applied 5% discount on regular items (₹${extraDiscount.toFixed(2)}).`;
       }
     }
 
-    // Combine base coupon discount (capped if applicable) with the automatic 5% extra discount (uncapped)
+    // Combine base coupon discount (capped if applicable) with the automatic 5% extra discount (exempt from cap)
     discount = baseDiscount + extraDiscount;
 
-    discount = Math.min(discount, gross); // Absolute safety ceiling
+    discount = Math.min(discount, gross); // Absolute safety constraint
     if (discount > 0) {
       workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
     }
     
     return { gross, discount, totalUnits, net: gross - discount, workingText };
   };
-
 
   const totals = calculateTotals();
   
@@ -965,7 +995,7 @@ export default function App() {
                           <p className="font-mono font-bold text-sm text-gray-900 truncate">{item.sku}</p>
                           <button onClick={() => removeFromCart(idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{item.brand} • {item.size}</p>
+                        <p className="text-[10px] text-gray-500 mt-0.5">{item.brand} • {item.size} {item.onSale ? '• 🏷️ SALE' : ''}</p>
                         <div className="flex justify-between items-center mt-1">
                           <p className="text-xs font-medium text-gray-500">{item.units} × ₹{item.zrp}</p>
                           <p className="text-sm font-bold text-gray-900">₹{(item.units * item.zrp).toFixed(2)}</p>
@@ -987,7 +1017,7 @@ export default function App() {
                 <div className="p-4 bg-white space-y-2 border-t border-gray-100">
                   <div className="flex justify-between text-sm text-gray-600"><span>Gross Total</span><span>₹{totals.gross.toFixed(2)}</span></div>
                   {totals.discount > 0 && (
-                    <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode || 'PROMO/AUTO'})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
                   )}
                   <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                     <span className="font-bold text-gray-800">Final Total</span><span className="text-2xl font-black text-pink-600">₹{totals.net.toFixed(2)}</span>
@@ -1105,7 +1135,7 @@ export default function App() {
                   </div>
                   {totals.discount > 0 && (
                     <div className="flex justify-between text-green-600 font-medium">
-                      <span>Discount ({customer.discountCode}):</span> 
+                      <span>Discount ({customer.discountCode || 'PROMO/AUTO'}):</span> 
                       <span>-₹{totals.discount.toFixed(2)}</span>
                     </div>
                   )}
