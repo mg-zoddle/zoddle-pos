@@ -77,13 +77,13 @@ const compressImage = (file) => {
         const MAX_WIDTH = 400; // Reduced from 800px to 400px for much easier storage
         let newWidth = img.width;
         let newHeight = img.height;
-        
+
         // Prevent upscaling: only shrink if the image is wider than MAX_WIDTH
         if (img.width > MAX_WIDTH) {
           newWidth = MAX_WIDTH;
           newHeight = (img.height * MAX_WIDTH) / img.width;
         }
-        
+
         canvas.width = newWidth;
         canvas.height = newHeight;
         const ctx = canvas.getContext('2d');
@@ -105,25 +105,25 @@ export default function App() {
   const [inventory, setInventory] = useState([]);
   const [discountMap, setDiscountMap] = useState({});
   const [discountRules, setDiscountRules] = useState({}); // NEW: Stores Dynamic Rules
-  const [orderDatabase, setOrderDatabase] = useState([]); 
+  const [orderDatabase, setOrderDatabase] = useState([]);
   const [syncQueue, setSyncQueue] = useState([]);
-  const [auditLog, setAuditLog] = useState([]); 
+  const [auditLog, setAuditLog] = useState([]);
   const [status, setStatus] = useState({ type: 'info', text: 'Initializing...' });
   const [isSaving, setIsSaving] = useState(false);
-  const [isFetching, setIsFetching] = useState(false); 
+  const [isFetching, setIsFetching] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [selectedAuditOrderId, setSelectedAuditOrderId] = useState(null);
-  
+
   // Draft Tracking Reference
   const draftLoaded = useRef(false);
 
   // Order Header State
-  const [orderId, setOrderId] = useState(generateOrderId()); 
-  const [preAssignedId, setPreAssignedId] = useState(''); 
-  const [lastAutoFilledId, setLastAutoFilledId] = useState(''); 
+  const [orderId, setOrderId] = useState(generateOrderId());
+  const [preAssignedId, setPreAssignedId] = useState('');
+  const [lastAutoFilledId, setLastAutoFilledId] = useState('');
   const [customer, setCustomer] = useState({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
   const [paymentMethod, setPaymentMethod] = useState('Online');
-  const [orderType, setOrderType] = useState(null); 
+  const [orderType, setOrderType] = useState(null);
 
   // Current Item Form State
   const [itemForm, setItemForm] = useState({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null, onSale: false });
@@ -147,7 +147,7 @@ export default function App() {
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -161,7 +161,7 @@ export default function App() {
       setIsAuthenticated(true);
       setAuthError(false);
       loadEncryptedData();
-      fetchInventory(false); 
+      fetchInventory(false);
     } else {
       setAuthError(true);
       setPinInput("");
@@ -175,13 +175,13 @@ export default function App() {
       const decrypted = decryptData(savedQueue, APP_PIN);
       if (decrypted) setSyncQueue(decrypted);
     }
-    
+
     const savedLog = localStorage.getItem('zoddle_audit_log');
     if (savedLog) {
       const decryptedLog = decryptData(savedLog, APP_PIN);
       if (decryptedLog) setAuditLog(decryptedLog);
     }
-    
+
     const cachedDb = localStorage.getItem('zoddle_order_db');
     if (cachedDb) setOrderDatabase(JSON.parse(cachedDb));
 
@@ -229,18 +229,18 @@ export default function App() {
   const logOrderLocally = (payload, status) => {
     setAuditLog(prev => {
       const newLog = [{
-        id: payload.orderId, 
+        id: payload.orderId,
         time: payload.timestamp,
         name: payload.customer || 'RTO',
         amount: payload.totalAmount,
         status: status,
         units: payload.totalUnits,
-        fullDetails: payload 
+        fullDetails: payload
       }, ...prev];
 
       let stored = false;
-      let currentLog = [...newLog].slice(0, 40); 
-      
+      let currentLog = [...newLog].slice(0, 40);
+
       while (!stored && currentLog.length > 0) {
         try {
           localStorage.setItem('zoddle_audit_log', encryptData(currentLog, APP_PIN));
@@ -268,20 +268,20 @@ export default function App() {
 
       const response = await fetch(API_ENDPOINT);
       const data = await response.json();
-      
+
       if (data && data.inventory) {
         setInventory(data.inventory);
         setDiscountMap(data.discountMap || {});
         setDiscountRules(data.discountRules || {}); // NEW: Store Dynamic Rules
-        
+
         const freshOrderDb = data.orderDatabase || [];
         setOrderDatabase(freshOrderDb);
-        
+
         localStorage.setItem('zoddle_inventory', JSON.stringify(data.inventory));
         localStorage.setItem('zoddle_discount_map', JSON.stringify(data.discountMap || {}));
         localStorage.setItem('zoddle_discount_rules', JSON.stringify(data.discountRules || {})); // NEW: Cache Rules Offline
         localStorage.setItem('zoddle_order_db', JSON.stringify(freshOrderDb));
-        
+
         if (!isSilent) setStatus({ type: 'success', text: 'Data Synced' });
       } else {
         throw new Error("Invalid format");
@@ -312,8 +312,8 @@ export default function App() {
     let interval;
     if (isAuthenticated && isOnline) {
       interval = setInterval(() => {
-        fetchInventory(true); 
-      }, 120000); 
+        fetchInventory(true);
+      }, 120000);
     }
     return () => clearInterval(interval);
   }, [isAuthenticated, isOnline]);
@@ -328,18 +328,18 @@ export default function App() {
       try {
         await fetch(API_ENDPOINT, {
           method: 'POST',
-          mode: 'no-cors', 
+          mode: 'no-cors',
           headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify(syncQueue[i])
         });
-        
+
         updateAuditLogStatus(syncQueue[i].orderId, 'SYNCED');
         newQueue.splice(i, 1);
       } catch (err) {
         console.error("Failed to sync item", err);
       }
     }
-    
+
     setSyncQueue(newQueue);
     setIsSaving(false);
     setStatus({ type: 'success', text: newQueue.length === 0 ? 'All offline orders synced!' : `${newQueue.length} orders failed to sync.` });
@@ -370,7 +370,7 @@ export default function App() {
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payloadToSync)
       });
-      
+
       updateAuditLogStatus(orderId, 'SYNCED');
       if (!isForceSync) {
         setSyncQueue(prev => prev.filter(q => q.orderId !== orderId));
@@ -386,11 +386,11 @@ export default function App() {
   const handlePreAssignedIdChange = (e) => {
     const val = e.target.value;
     setPreAssignedId(val);
-    
+
     const searchVal = val.trim().toUpperCase();
     if (!searchVal) {
       setCustomer(prev => ({ ...prev, name: '', phone: '', realPhone: '', discountCode: '' }));
-      setLastAutoFilledId(''); 
+      setLastAutoFilledId('');
       return;
     }
   };
@@ -410,7 +410,7 @@ export default function App() {
       } else if (maskedPhone) {
         maskedPhone = '*'.repeat(maskedPhone.length);
       }
-      
+
       setCustomer(prev => ({
         ...prev,
         name: match.name || prev.name,
@@ -424,7 +424,7 @@ export default function App() {
 
   const handleSkuSearch = (e) => {
     const sku = e.target.value.toUpperCase();
-    setFormError(""); 
+    setFormError("");
     if (!sku) {
       setItemForm(prev => ({ ...prev, sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', photoData: null, onSale: false }));
       setIsSkuLocked(false);
@@ -451,7 +451,7 @@ export default function App() {
     if (!file) return;
     const compressedBase64 = await compressImage(file);
     setItemForm(prev => ({ ...prev, photoData: compressedBase64 }));
-    setFormError(""); 
+    setFormError("");
   };
 
   const addToCart = () => {
@@ -459,15 +459,15 @@ export default function App() {
       setFormError("SKU and ZRP Price are required.");
       return;
     }
-    
+
     if (!isSkuLocked && !itemForm.photoData) {
       setFormError("📸 A photo is mandatory for new product entries.");
       return;
     }
 
-    const finalUnits = parseInt(itemForm.units) || 1; 
+    const finalUnits = parseInt(itemForm.units) || 1;
 
-    setFormError(""); 
+    setFormError("");
     setCart([...cart, { ...itemForm, units: finalUnits, mrp: parseFloat(itemForm.mrp) || 0, zrp: parseFloat(itemForm.zrp) }]);
     setItemForm({ sku: '', brand: '', size: '0-1M', gender: '', mrp: '', zrp: '', units: 1, photoData: null, onSale: false });
     setIsSkuLocked(false);
@@ -477,7 +477,7 @@ export default function App() {
 
   const calculateTotals = () => {
     const gross = cart.reduce((sum, item) => sum + (item.zrp * item.units), 0);
-    
+
     // Subtotal of ONLY regular items (NOT on sale)
     const nonSaleGross = cart.reduce((sum, item) => {
       return sum + (item.onSale === true ? 0 : (item.zrp * item.units));
@@ -486,9 +486,9 @@ export default function App() {
     const totalUnits = cart.reduce((sum, item) => sum + item.units, 0);
     let discount = 0;
     let workingText = "";
-    
+
     const enteredCode = customer.discountCode.trim().toUpperCase();
-    let code = ""; 
+    let code = "";
     let mapNote = "";
 
     // Step 1: Map the entered code to a Base Code (Alias Management)
@@ -506,7 +506,7 @@ export default function App() {
       } else if (Object.keys(safeMap).length === 0) {
         code = enteredCode; // If offline/map didn't load, attempt direct
       } else {
-        code = "INVALID"; 
+        code = "INVALID";
       }
     }
 
@@ -534,12 +534,12 @@ export default function App() {
             if (activeRule.discountValue > nonSaleGross) {
               workingText += `\n• Notice: Cash discount capped to regular items subtotal (₹${nonSaleGross.toFixed(2)}).`;
             }
-          } 
+          }
           else if (activeRule.type === 'PCT_UNIT_TIER') {
-            percentageValue = activeRule.discountValue; 
-            baseDiscount = nonSaleGross * percentageValue; 
+            percentageValue = activeRule.discountValue;
+            baseDiscount = nonSaleGross * percentageValue;
             workingText = `• Code ${enteredCode}${mapNote} applied.\n• Logic: ${activeRule.description || `${percentageValue * 100}% off applied`}\n• Applied on Regular Items: ₹${nonSaleGross.toFixed(2)} (Excludes sale items)`;
-          } 
+          }
           else if (activeRule.type === 'BUY_X_GET_Y') {
             // Flatten and sort cart by price (highest to lowest)
             let flatList = [];
@@ -553,7 +553,7 @@ export default function App() {
             let buyXCount = 0;
             let freeYCount = 0;
             let freeValue = 0;
-            
+
             // Extract the 'Y' free items immediately after the 'X' paid items
             for (let i = 0; i < flatList.length; i++) {
               let item = flatList[i];
@@ -620,34 +620,19 @@ export default function App() {
       workingText = `• Discount code entered but no active rule is defined for it.`;
     }
 
-    // Step 3: APPLY THE AUTOMATIC 4+ UNITS ADDITIONAL DISCOUNT
-    let extraDiscount = 0;
-    if (totalUnits >= 4) {
-      extraDiscount = nonSaleGross * 0.05;
-      
-      if (activeRule && activeRule.type === 'PCT_UNIT_TIER') {
-        const combinedPercentage = (percentageValue + 0.05) * 100;
-        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off applied to regular items (Total: ${combinedPercentage}%).`;
-      } else if (activeRule) {
-        workingText += `\n• 🛍️ 4+ items purchased! Extra 5% off regular items (₹${extraDiscount.toFixed(2)}) applied on top of code discount (Exempt from cap).`;
-      } else {
-        workingText = `• 🛍️ 4+ items purchased! Automatically applied 5% discount on regular items (₹${extraDiscount.toFixed(2)}).`;
-      }
-    }
-
-    // Combine base coupon discount (capped if applicable) with the automatic 5% extra discount (exempt from cap)
-    discount = baseDiscount + extraDiscount;
+    // Only the coupon/base code discount applies. (The automatic 4+ units extra 5% has been removed.)
+    discount = baseDiscount;
 
     discount = Math.min(discount, gross); // Absolute safety constraint
     if (discount > 0) {
       workingText += `\n• Total Saving: ₹${discount.toFixed(2)}`;
     }
-    
+
     return { gross, discount, totalUnits, net: gross - discount, workingText };
   };
 
   const totals = calculateTotals();
-  
+
   // Validation adjusts based on whether it is a Sale or an Unsuccessful Session
   const isReadyToSubmit = orderType === 'SALE'
     ? (cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '' && preAssignedId.trim() !== '')
@@ -660,14 +645,14 @@ export default function App() {
     if (finalPhone.includes('*') && customer.realPhone) {
       finalPhone = customer.realPhone;
     }
-    
+
     const payload = {
-      apiToken: APP_PIN, 
+      apiToken: APP_PIN,
       orderId: orderId,
       preAssignedId: preAssignedId.trim().toUpperCase(),
       timestamp: getUniformTimestamp(),
       customer: customer.name.trim(),
-      phone: finalPhone, 
+      phone: finalPhone,
       executive: customer.executive.trim(),
       totalUnits: orderType === 'SALE' ? totals.totalUnits : 0,
       totalAmount: orderType === 'SALE' ? totals.net : 0,
@@ -675,7 +660,7 @@ export default function App() {
       discountAmount: orderType === 'SALE' ? totals.discount : 0,
       paymentMethod: orderType === 'SALE' ? paymentMethod : "N/A",
       lineItems: orderType === 'SALE' ? cart : [],
-      orderType: orderType 
+      orderType: orderType
     };
 
     setIsSaving(true);
@@ -683,12 +668,12 @@ export default function App() {
 
     try {
       await fetch(API_ENDPOINT, {
-        method: 'POST', 
+        method: 'POST',
         mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' }, 
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       });
-      
+
       logOrderLocally(payload, 'SYNCED');
       finishOrderSubmission();
     } catch (err) {
@@ -707,15 +692,15 @@ export default function App() {
   const resetForm = () => {
     setCart([]); setOrderId(generateOrderId());
     setPreAssignedId('');
-    setLastAutoFilledId(''); 
+    setLastAutoFilledId('');
     setCustomer({ name: '', phone: '', realPhone: '', executive: '', discountCode: '' });
-    setPaymentMethod('Online'); 
-    setOrderType(null); 
+    setPaymentMethod('Online');
+    setOrderType(null);
     setShowSummary(false); setIsSaving(false);
-    
+
     localStorage.removeItem('zoddle_draft_order');
 
-    setTimeout(() => { fetchInventory(false); }, 2000); 
+    setTimeout(() => { fetchInventory(false); }, 2000);
   };
 
   const activeAuditOrder = auditLog.find(log => log.id === selectedAuditOrderId);
@@ -733,8 +718,8 @@ export default function App() {
             <p className="text-sm text-gray-500 mt-2">Enter PIN to access POS & Decrypt Data</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
-            <input 
-              type="password" 
+            <input
+              type="password"
               inputMode="numeric"
               pattern="[0-9]*"
               value={pinInput}
@@ -773,7 +758,7 @@ export default function App() {
             </button>
             {isOnline ? <Wifi className="text-green-500 w-5 h-5" /> : <WifiOff className="text-red-500 w-5 h-5" />}
             {syncQueue.length > 0 && (
-              <button 
+              <button
                 onClick={syncOfflineQueue} disabled={!isOnline || isSaving}
                 className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-200 text-gray-500'}`}
               >
@@ -782,7 +767,7 @@ export default function App() {
             )}
           </div>
         </div>
-        
+
         {/* Dynamic Status Bar */}
         {status.text && status.type !== 'info' && (
           <div className={`px-4 py-2 text-xs text-center font-bold ${status.type === 'error' ? 'bg-red-500 text-white' : status.type === 'warning' ? 'bg-amber-500 text-white' : 'bg-green-500 text-white'}`}>
@@ -804,19 +789,19 @@ export default function App() {
             </div>
           </div>
           <div className="space-y-3">
-            
+
             <div className="mb-3">
                <div className="flex justify-between items-end mb-1">
                  <label className="text-[10px] font-bold text-indigo-400 uppercase">Pre-Assigned Order ID *</label>
-                 
+
                  <div className="flex items-center gap-2">
                    <span className={`text-[9px] font-bold ${orderDatabase.length > 0 ? 'text-green-500' : 'text-red-400'}`}>
                      {orderDatabase.length} / 50 IDs loaded
                    </span>
-                   <button 
-                     onClick={() => fetchInventory(false)} 
+                   <button
+                     onClick={() => fetchInventory(false)}
                      disabled={isFetching}
-                     className={`text-gray-400 hover:text-indigo-600 transition-colors ${isFetching ? 'animate-spin text-indigo-400' : ''}`} 
+                     className={`text-gray-400 hover:text-indigo-600 transition-colors ${isFetching ? 'animate-spin text-indigo-400' : ''}`}
                      title="Force Manual Database Sync"
                    >
                      <RefreshCw className="w-4 h-4"/>
@@ -824,19 +809,19 @@ export default function App() {
                  </div>
                </div>
                <div className="relative">
-                 <input 
-                   type="text" 
-                   value={preAssignedId} 
-                   onChange={handlePreAssignedIdChange} 
-                   className="w-full bg-indigo-50 border border-indigo-100 rounded-lg p-2.5 text-sm font-bold uppercase text-indigo-700 focus:ring-2 focus:ring-indigo-300" 
-                   placeholder="Required..." 
+                 <input
+                   type="text"
+                   value={preAssignedId}
+                   onChange={handlePreAssignedIdChange}
+                   className="w-full bg-indigo-50 border border-indigo-100 rounded-lg p-2.5 text-sm font-bold uppercase text-indigo-700 focus:ring-2 focus:ring-indigo-300"
+                   placeholder="Required..."
                  />
                  {preAssignedId && orderDatabase.some(o => String(o.orderId).trim().toUpperCase() === preAssignedId.trim().toUpperCase()) && (
                    <CheckCircle className="w-5 h-5 text-green-500 absolute right-3 top-2.5" />
                  )}
                </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Customer Name</label>
@@ -863,23 +848,23 @@ export default function App() {
         {/* --- NEW PROMINENT OUTCOME SELECTION --- */}
         <section className="mb-6 space-y-3">
            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Select Session Outcome *</h3>
-           <button 
-             onClick={() => setOrderType('SALE')} 
+           <button
+             onClick={() => setOrderType('SALE')}
              className={`w-full p-4 rounded-2xl font-bold border-2 transition-all text-left flex items-center justify-between ${orderType === 'SALE' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-md shadow-pink-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-pink-200'}`}
            >
              <span className="flex items-center gap-3"><ShoppingCart className="w-6 h-6"/> Record Successful Sale</span>
              {orderType === 'SALE' && <CheckCircle className="w-5 h-5"/>}
            </button>
            <div className="grid grid-cols-2 gap-3">
-             <button 
-               onClick={() => setOrderType('RTO')} 
+             <button
+               onClick={() => setOrderType('RTO')}
                className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'RTO' ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-md shadow-orange-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-orange-200'}`}
              >
                <span className="text-2xl mb-1">📦</span>
                <span className="text-sm">RTO</span>
              </button>
-             <button 
-               onClick={() => setOrderType('DOL')} 
+             <button
+               onClick={() => setOrderType('DOL')}
                className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'DOL' ? 'bg-red-50 border-red-500 text-red-700 shadow-md shadow-red-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-red-200'}`}
              >
                <span className="text-2xl mb-1">❌</span>
@@ -942,13 +927,13 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase">Qty</label>
-                    <input 
-                      type="number" 
-                      min="1" 
-                      value={itemForm.units} 
-                      onFocus={e => e.target.select()} 
-                      onChange={e => setItemForm({...itemForm, units: e.target.value === '' ? '' : parseInt(e.target.value)})} 
-                      className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold" 
+                    <input
+                      type="number"
+                      min="1"
+                      value={itemForm.units}
+                      onFocus={e => e.target.select()}
+                      onChange={e => setItemForm({...itemForm, units: e.target.value === '' ? '' : parseInt(e.target.value)})}
+                      className="w-full bg-gray-50 border-0 rounded-lg p-2 text-sm text-center font-bold"
                     />
                   </div>
                 </div>
@@ -1017,7 +1002,7 @@ export default function App() {
                 <div className="p-4 bg-white space-y-2 border-t border-gray-100">
                   <div className="flex justify-between text-sm text-gray-600"><span>Gross Total</span><span>₹{totals.gross.toFixed(2)}</span></div>
                   {totals.discount > 0 && (
-                    <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode || 'PROMO/AUTO'})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm font-bold text-green-600"><span>Discount ({customer.discountCode || 'PROMO'})</span><span>-₹{totals.discount.toFixed(2)}</span></div>
                   )}
                   <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                     <span className="font-bold text-gray-800">Final Total</span><span className="text-2xl font-black text-pink-600">₹{totals.net.toFixed(2)}</span>
@@ -1050,8 +1035,8 @@ export default function App() {
               </>
             )}
           </div>
-          <button 
-            disabled={!isReadyToSubmit} 
+          <button
+            disabled={!isReadyToSubmit}
             onClick={() => orderType === 'SALE' ? setShowSummary(true) : submitOrder()}
             className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${isReadyToSubmit ? (orderType === 'SALE' ? 'bg-pink-600 hover:bg-pink-700 shadow-pink-200' : (orderType === 'RTO' ? 'bg-orange-500 shadow-orange-200' : 'bg-red-500 shadow-red-200')) : 'bg-gray-300'}`}
           >
@@ -1068,34 +1053,34 @@ export default function App() {
               <h2 className="text-lg font-bold">Review Order</h2>
               <button onClick={() => setShowSummary(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><X className="w-5 h-5"/></button>
             </div>
-            
+
             <div className="overflow-y-auto p-6 space-y-6 flex-1">
-              
+
               {/* Highlighted Net Payable Amount */}
               <div className="text-center space-y-1">
                 <p className="text-sm text-gray-500">Total Payable Amount</p>
                 <p className="text-4xl font-black text-pink-600">₹{totals.net.toFixed(2)}</p>
                 <p className="text-xs font-mono text-gray-400">System: {orderId} | Ref: {preAssignedId.trim().toUpperCase()}</p>
               </div>
-              
+
               {/* Customer Header Info & Payment Method */}
               <div className="bg-gray-50 p-4 rounded-2xl text-sm space-y-3">
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-bold">{customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Phone</span><span className="font-bold">{customer.phone || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Executive</span><span className="font-bold">{customer.executive}</span></div>
-                
+
                 {/* Payment Method Toggle */}
                 <div className="pt-3 border-t border-gray-200">
                   <p className="text-xs text-gray-500 mb-2 uppercase font-bold tracking-wider">Select Payment Method</p>
                   <div className="flex gap-2">
-                    <button 
-                      onClick={() => setPaymentMethod('Online')} 
+                    <button
+                      onClick={() => setPaymentMethod('Online')}
                       className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Online' ? 'bg-pink-600 text-white shadow-md shadow-pink-200' : 'bg-white border border-gray-200 text-gray-600'}`}
                     >
                       UPI / Online
                     </button>
-                    <button 
-                      onClick={() => setPaymentMethod('Cash')} 
+                    <button
+                      onClick={() => setPaymentMethod('Cash')}
                       className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Cash' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-white border border-gray-200 text-gray-600'}`}
                     >
                       Cash
@@ -1126,16 +1111,16 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
-                
+
                 {/* Aggregate Breakdown inside the table card */}
                 <div className="p-3 bg-gray-50 space-y-1 border-t border-gray-100">
                   <div className="flex justify-between text-gray-500">
-                    <span>Gross Subtotal ({totals.totalUnits} Units):</span> 
+                    <span>Gross Subtotal ({totals.totalUnits} Units):</span>
                     <span>₹{totals.gross.toFixed(2)}</span>
                   </div>
                   {totals.discount > 0 && (
                     <div className="flex justify-between text-green-600 font-medium">
-                      <span>Discount ({customer.discountCode || 'PROMO/AUTO'}):</span> 
+                      <span>Discount ({customer.discountCode || 'PROMO'}):</span>
                       <span>-₹{totals.discount.toFixed(2)}</span>
                     </div>
                   )}
@@ -1150,7 +1135,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            
+
             <div className="p-4 border-t bg-white">
               <button onClick={submitOrder} disabled={isSaving} className={`w-full text-white font-bold p-4 rounded-xl shadow-lg text-lg flex justify-center items-center gap-2 ${paymentMethod === 'Cash' ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-pink-600 hover:bg-pink-700 shadow-pink-200'}`}>
                 {isSaving ? 'Saving...' : (isOnline ? 'Confirm & Save' : 'Save Offline')}
@@ -1164,7 +1149,7 @@ export default function App() {
       {showAuditModal && (
         <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 sm:p-0">
           <div className="bg-white w-full max-w-md rounded-3xl max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
-            
+
             {!activeAuditOrder ? (
               // --- LIST VIEW ---
               <>
@@ -1172,10 +1157,10 @@ export default function App() {
                   <h2 className="text-lg font-bold flex items-center gap-2 text-gray-800"><ListIcon className="w-5 h-5 text-pink-500"/> Audit Log</h2>
                   <button onClick={() => { setShowAuditModal(false); setSelectedAuditOrderId(null); }} className="p-2 bg-gray-200 rounded-full text-gray-600"><X className="w-5 h-5"/></button>
                 </div>
-                
+
                 <div className="overflow-y-auto p-4 flex-1 space-y-3 bg-gray-50/50">
                   <p className="text-xs text-gray-500 text-center mb-4 font-medium uppercase tracking-wider">Last 40 Transactions</p>
-                  
+
                   {auditLog.length === 0 ? (
                     <div className="text-center text-gray-400 py-10 flex flex-col items-center">
                       <FileText className="w-10 h-10 mb-2 opacity-50" />
@@ -1183,8 +1168,8 @@ export default function App() {
                     </div>
                   ) : (
                     auditLog.map((log, i) => (
-                      <div 
-                        key={i} 
+                      <div
+                        key={i}
                         onClick={() => setSelectedAuditOrderId(log.id)}
                         className={`border rounded-xl p-3 bg-white shadow-sm flex flex-col gap-2 cursor-pointer hover:bg-gray-50 active:scale-[0.98] transition-all ${log.status === 'OFFLINE_PENDING' ? 'border-amber-300 ring-1 ring-amber-100' : 'border-gray-100'}`}
                       >
@@ -1229,7 +1214,7 @@ export default function App() {
                   </h2>
                   <div className="w-9" />
                 </div>
-                
+
                 <div className="overflow-y-auto p-4 flex-1 bg-gray-50/50">
                    <div className={`mb-4 p-3 rounded-xl flex items-center justify-between font-bold text-xs border ${activeAuditOrder.status === 'SYNCED' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                       <span>Status:</span>
@@ -1243,7 +1228,7 @@ export default function App() {
                           <div className="flex justify-between text-gray-500"><span>Pre-Assigned ID:</span> <span className="font-bold text-indigo-600">{activeAuditOrder.fullDetails.preAssignedId || '-'}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Customer:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.customer || 'N/A'}</span></div>
                           <div className="flex justify-between text-gray-500"><span>Executive:</span> <span className="font-medium text-gray-900">{activeAuditOrder.fullDetails.executive}</span></div>
-                          
+
                           {(!activeAuditOrder.fullDetails.orderType || activeAuditOrder.fullDetails.orderType === 'SALE') && (
                             <>
                               <div className="flex justify-between text-gray-500 pt-2 border-t mt-2"><span>Pay Mode:</span> <span className="font-bold text-gray-900">{activeAuditOrder.fullDetails.paymentMethod}</span></div>
@@ -1308,9 +1293,9 @@ export default function App() {
                 </div>
                 <div className="p-4 border-t bg-white space-y-3">
                    {activeAuditOrder.status === 'OFFLINE_PENDING' ? (
-                      <button 
-                         onClick={() => resubmitAuditOrder(activeAuditOrder.id)} 
-                         disabled={isSaving} 
+                      <button
+                         onClick={() => resubmitAuditOrder(activeAuditOrder.id)}
+                         disabled={isSaving}
                          className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-amber-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98]"
                       >
                          {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
@@ -1319,9 +1304,9 @@ export default function App() {
                    ) : (
                       <>
                         <p className="text-[10px] text-gray-500 text-center">If this order is missing from the system, you can force a complete re-upload including images.</p>
-                        <button 
-                           onClick={() => resubmitAuditOrder(activeAuditOrder.id)} 
-                           disabled={isSaving} 
+                        <button
+                           onClick={() => resubmitAuditOrder(activeAuditOrder.id)}
+                           disabled={isSaving}
                            className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl shadow-lg shadow-gray-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98]"
                         >
                            {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
@@ -1332,7 +1317,7 @@ export default function App() {
                 </div>
               </>
             )}
-            
+
           </div>
         </div>
       )}
