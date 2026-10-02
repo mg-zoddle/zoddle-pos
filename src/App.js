@@ -39,7 +39,9 @@ const getUniformTimestamp = () => {
   return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 };
 
-const generateOrderId = () => `ZORD-${Date.now().toString(36).toUpperCase()}`;
+// Timestamp alone can collide if two devices submit in the same millisecond.
+// The random suffix makes orderId safe to use as a server-side de-duplication key.
+const generateOrderId = () => `ZORD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
 // --- ENCRYPTION HELPERS ---
 const encryptData = (data, key) => {
@@ -94,6 +96,25 @@ const compressImage = (file) => {
   });
 };
 
+// Single POST helper with a hard timeout. Without a timeout, a stalled request on a
+// weak mobile connection would leave the submit button disabled indefinitely and push
+// the rider towards reloading the app and re-submitting.
+const postToServer = async (payload, timeoutMs = 20000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(API_ENDPOINT, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export default function App() {
   // --- Security State ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -116,6 +137,12 @@ export default function App() {
 
   // Draft Tracking Reference
   const draftLoaded = useRef(false);
+
+  // Double-submit guard. This is a ref, NOT state, on purpose: setIsSaving(true) only
+  // takes effect on the next render, so a second tap fired in the same frame reads a
+  // stale `isSaving === false` and sails straight through. A ref updates synchronously.
+  // One shared lock covers every write path so two uploads can never overlap.
+  const writeLock = useRef(false);
 
   // Order Header State
   const [orderId, setOrderId] = useState(generateOrderId());
@@ -319,67 +346,70 @@ export default function App() {
   }, [isAuthenticated, isOnline]);
 
   const syncOfflineQueue = async () => {
-    if (syncQueue.length === 0 || !isOnline || isSaving) return;
+    if (syncQueue.length === 0 || !isOnline) return;
+    if (writeLock.current) return; // Shared lock: never overlap with a live submit
+    writeLock.current = true;
+
     setIsSaving(true);
     setStatus({ type: 'warning', text: `Syncing ${syncQueue.length} offline orders...` });
 
     let newQueue = [...syncQueue];
-    for (let i = syncQueue.length - 1; i >= 0; i--) {
-      try {
-        await fetch(API_ENDPOINT, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(syncQueue[i])
-        });
-
-        updateAuditLogStatus(syncQueue[i].orderId, 'SYNCED');
-        newQueue.splice(i, 1);
-      } catch (err) {
-        console.error("Failed to sync item", err);
+    try {
+      for (let i = syncQueue.length - 1; i >= 0; i--) {
+        try {
+          await postToServer(syncQueue[i]);
+          updateAuditLogStatus(syncQueue[i].orderId, 'SYNCED');
+          newQueue.splice(i, 1);
+        } catch (err) {
+          console.error("Failed to sync item", err);
+        }
       }
-    }
 
-    setSyncQueue(newQueue);
-    setIsSaving(false);
-    setStatus({ type: 'success', text: newQueue.length === 0 ? 'All offline orders synced!' : `${newQueue.length} orders failed to sync.` });
+      setSyncQueue(newQueue);
+      setStatus({ type: 'success', text: newQueue.length === 0 ? 'All offline orders synced!' : `${newQueue.length} orders failed to sync.` });
+    } finally {
+      setIsSaving(false);
+      writeLock.current = false;
+    }
   };
 
   const resubmitAuditOrder = async (orderId) => {
-    let payloadToSync = syncQueue.find(q => q.orderId === orderId);
-    let isForceSync = false;
-
-    if (!payloadToSync) {
-      const auditEntry = auditLog.find(log => log.id === orderId);
-      if (auditEntry && auditEntry.fullDetails) {
-        payloadToSync = auditEntry.fullDetails;
-        isForceSync = true;
-      } else {
-        setStatus({ type: 'error', text: 'Order data not found locally.' });
-        return;
-      }
-    }
-
-    setIsSaving(true);
-    setStatus({ type: 'warning', text: isForceSync ? 'Force re-syncing order...' : 'Resubmitting order...' });
+    if (writeLock.current) return; // Shared lock: blocks repeat taps on Resubmit / Force Re-sync
+    writeLock.current = true;
 
     try {
-      await fetch(API_ENDPOINT, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payloadToSync)
-      });
+      let payloadToSync = syncQueue.find(q => q.orderId === orderId);
+      let isForceSync = false;
 
-      updateAuditLogStatus(orderId, 'SYNCED');
-      if (!isForceSync) {
-        setSyncQueue(prev => prev.filter(q => q.orderId !== orderId));
+      if (!payloadToSync) {
+        const auditEntry = auditLog.find(log => log.id === orderId);
+        if (auditEntry && auditEntry.fullDetails) {
+          payloadToSync = auditEntry.fullDetails;
+          isForceSync = true;
+        } else {
+          setStatus({ type: 'error', text: 'Order data not found locally.' });
+          return;
+        }
       }
-      setStatus({ type: 'success', text: `Order synced successfully!` });
-    } catch (err) {
-      setStatus({ type: 'error', text: 'Resubmit failed. Please check your connection.' });
+
+      setIsSaving(true);
+      setStatus({ type: 'warning', text: isForceSync ? 'Force re-syncing order...' : 'Resubmitting order...' });
+
+      try {
+        await postToServer(payloadToSync);
+
+        updateAuditLogStatus(orderId, 'SYNCED');
+        if (!isForceSync) {
+          setSyncQueue(prev => prev.filter(q => q.orderId !== orderId));
+        }
+        setStatus({ type: 'success', text: `Order synced successfully!` });
+      } catch (err) {
+        setStatus({ type: 'error', text: 'Resubmit failed. Please check your connection.' });
+      }
+      setIsSaving(false);
+    } finally {
+      writeLock.current = false;
     }
-    setIsSaving(false);
   };
 
   // --- Form Handlers ---
@@ -638,8 +668,14 @@ export default function App() {
     ? (cart.length > 0 && customer.name.trim() !== '' && customer.executive.trim() !== '' && preAssignedId.trim() !== '')
     : (preAssignedId.trim() !== '' && customer.executive.trim() !== '');
 
+  // Every submit-capable control is gated on the in-flight flag as well, so the button
+  // greys out the instant the first tap is registered.
+  const canSubmitNow = isReadyToSubmit && !isSaving;
+
   const submitOrder = async () => {
-    if (isSaving) return;
+    // Synchronous lock — see the writeLock declaration above for why this is a ref.
+    if (writeLock.current) return;
+    writeLock.current = true;
 
     let finalPhone = customer.phone.trim();
     if (finalPhone.includes('*') && customer.realPhone) {
@@ -667,20 +703,19 @@ export default function App() {
     setStatus({ type: 'warning', text: 'Connecting to Server...' });
 
     try {
-      await fetch(API_ENDPOINT, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      });
+      await postToServer(payload);
 
       logOrderLocally(payload, 'SYNCED');
       finishOrderSubmission();
     } catch (err) {
-      setSyncQueue([...syncQueue, payload]);
+      setSyncQueue(prev => [...prev, payload]);
       logOrderLocally(payload, 'OFFLINE_PENDING');
       setStatus({ type: 'error', text: 'Error detected. Saved to Secure Offline Queue.' });
       resetForm();
+    } finally {
+      // Belt and braces: the UI can never stay locked, whatever happened above.
+      setIsSaving(false);
+      writeLock.current = false;
     }
   };
 
@@ -760,7 +795,7 @@ export default function App() {
             {syncQueue.length > 0 && (
               <button
                 onClick={syncOfflineQueue} disabled={!isOnline || isSaving}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-200 text-gray-500'}`}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold disabled:cursor-not-allowed ${(isOnline && !isSaving) ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-200 text-gray-500'}`}
               >
                 <CloudUpload className="w-4 h-4" /> <span>{syncQueue.length} Pending</span>
               </button>
@@ -783,7 +818,7 @@ export default function App() {
             <h2 className="font-bold text-gray-700 flex items-center gap-2"><FileText className="w-5 h-5 text-pink-500"/> Order Details</h2>
             <div className="flex items-center gap-3">
               {(cart.length > 0 || preAssignedId || customer.name) && (
-                <button onClick={resetForm} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded transition-colors">Clear</button>
+                <button onClick={resetForm} disabled={isSaving} className="text-xs text-red-500 font-bold hover:bg-red-50 px-2 py-1 rounded transition-colors disabled:opacity-40">Clear</button>
               )}
               <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono">{orderId}</span>
             </div>
@@ -850,7 +885,8 @@ export default function App() {
            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Select Session Outcome *</h3>
            <button
              onClick={() => setOrderType('SALE')}
-             className={`w-full p-4 rounded-2xl font-bold border-2 transition-all text-left flex items-center justify-between ${orderType === 'SALE' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-md shadow-pink-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-pink-200'}`}
+             disabled={isSaving}
+             className={`w-full p-4 rounded-2xl font-bold border-2 transition-all text-left flex items-center justify-between disabled:opacity-50 ${orderType === 'SALE' ? 'bg-pink-50 border-pink-500 text-pink-700 shadow-md shadow-pink-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-pink-200'}`}
            >
              <span className="flex items-center gap-3"><ShoppingCart className="w-6 h-6"/> Record Successful Sale</span>
              {orderType === 'SALE' && <CheckCircle className="w-5 h-5"/>}
@@ -858,14 +894,16 @@ export default function App() {
            <div className="grid grid-cols-2 gap-3">
              <button
                onClick={() => setOrderType('RTO')}
-               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'RTO' ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-md shadow-orange-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-orange-200'}`}
+               disabled={isSaving}
+               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center disabled:opacity-50 ${orderType === 'RTO' ? 'bg-orange-50 border-orange-500 text-orange-700 shadow-md shadow-orange-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-orange-200'}`}
              >
                <span className="text-2xl mb-1">📦</span>
                <span className="text-sm">RTO</span>
              </button>
              <button
                onClick={() => setOrderType('DOL')}
-               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center ${orderType === 'DOL' ? 'bg-red-50 border-red-500 text-red-700 shadow-md shadow-red-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-red-200'}`}
+               disabled={isSaving}
+               className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center justify-center gap-2 text-center disabled:opacity-50 ${orderType === 'DOL' ? 'bg-red-50 border-red-500 text-red-700 shadow-md shadow-red-100' : 'bg-white border-gray-100 text-gray-600 shadow-sm hover:border-red-200'}`}
              >
                <span className="text-2xl mb-1">❌</span>
                <span className="text-[11px] sm:text-xs">DOL</span>
@@ -978,7 +1016,7 @@ export default function App() {
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-start">
                           <p className="font-mono font-bold text-sm text-gray-900 truncate">{item.sku}</p>
-                          <button onClick={() => removeFromCart(idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                          <button onClick={() => removeFromCart(idx)} disabled={isSaving} className="p-1 text-red-400 hover:text-red-600 disabled:opacity-40"><Trash2 className="w-4 h-4"/></button>
                         </div>
                         <p className="text-[10px] text-gray-500 mt-0.5">{item.brand} • {item.size} {item.onSale ? '• 🏷️ SALE' : ''}</p>
                         <div className="flex justify-between items-center mt-1">
@@ -1036,11 +1074,15 @@ export default function App() {
             )}
           </div>
           <button
-            disabled={!isReadyToSubmit}
+            disabled={!canSubmitNow}
             onClick={() => orderType === 'SALE' ? setShowSummary(true) : submitOrder()}
-            className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${isReadyToSubmit ? (orderType === 'SALE' ? 'bg-pink-600 hover:bg-pink-700 shadow-pink-200' : (orderType === 'RTO' ? 'bg-orange-500 shadow-orange-200' : 'bg-red-500 shadow-red-200')) : 'bg-gray-300'}`}
+            className={`px-8 py-3 rounded-xl font-bold text-white flex items-center gap-2 transition-all ${canSubmitNow ? (orderType === 'SALE' ? 'bg-pink-600 hover:bg-pink-700 shadow-pink-200 active:scale-[0.98]' : (orderType === 'RTO' ? 'bg-orange-500 shadow-orange-200 active:scale-[0.98]' : 'bg-red-500 shadow-red-200 active:scale-[0.98]')) : 'bg-gray-300 cursor-not-allowed'}`}
           >
-            {orderType === 'SALE' ? 'Checkout' : (orderType ? 'Submit' : 'Select Action')} <CheckCircle className="w-5 h-5"/>
+            {isSaving ? (
+              <>Submitting... <CloudUpload className="w-5 h-5 animate-bounce"/></>
+            ) : (
+              <>{orderType === 'SALE' ? 'Checkout' : (orderType ? 'Submit' : 'Select Action')} <CheckCircle className="w-5 h-5"/></>
+            )}
           </button>
         </div>
       </div>
@@ -1051,7 +1093,7 @@ export default function App() {
           <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-10">
             <div className="p-4 border-b flex justify-between items-center bg-gray-50">
               <h2 className="text-lg font-bold">Review Order</h2>
-              <button onClick={() => setShowSummary(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowSummary(false)} disabled={isSaving} className="p-2 bg-gray-200 rounded-full text-gray-600 disabled:opacity-40"><X className="w-5 h-5"/></button>
             </div>
 
             <div className="overflow-y-auto p-6 space-y-6 flex-1">
@@ -1075,13 +1117,15 @@ export default function App() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setPaymentMethod('Online')}
-                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Online' ? 'bg-pink-600 text-white shadow-md shadow-pink-200' : 'bg-white border border-gray-200 text-gray-600'}`}
+                      disabled={isSaving}
+                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 ${paymentMethod === 'Online' ? 'bg-pink-600 text-white shadow-md shadow-pink-200' : 'bg-white border border-gray-200 text-gray-600'}`}
                     >
                       UPI / Online
                     </button>
                     <button
                       onClick={() => setPaymentMethod('Cash')}
-                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all ${paymentMethod === 'Cash' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-white border border-gray-200 text-gray-600'}`}
+                      disabled={isSaving}
+                      className={`flex-1 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 ${paymentMethod === 'Cash' ? 'bg-green-600 text-white shadow-md shadow-green-200' : 'bg-white border border-gray-200 text-gray-600'}`}
                     >
                       Cash
                     </button>
@@ -1137,8 +1181,8 @@ export default function App() {
             </div>
 
             <div className="p-4 border-t bg-white">
-              <button onClick={submitOrder} disabled={isSaving} className={`w-full text-white font-bold p-4 rounded-xl shadow-lg text-lg flex justify-center items-center gap-2 ${paymentMethod === 'Cash' ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-pink-600 hover:bg-pink-700 shadow-pink-200'}`}>
-                {isSaving ? 'Saving...' : (isOnline ? 'Confirm & Save' : 'Save Offline')}
+              <button onClick={submitOrder} disabled={isSaving} className={`w-full text-white font-bold p-4 rounded-xl shadow-lg text-lg flex justify-center items-center gap-2 transition-all disabled:cursor-not-allowed ${isSaving ? 'bg-gray-400 shadow-none' : (paymentMethod === 'Cash' ? 'bg-green-600 hover:bg-green-700 shadow-green-200 active:scale-[0.98]' : 'bg-pink-600 hover:bg-pink-700 shadow-pink-200 active:scale-[0.98]')}`}>
+                {isSaving ? <><CloudUpload className="w-5 h-5 animate-bounce"/> Saving...</> : (isOnline ? 'Confirm & Save' : 'Save Offline')}
               </button>
             </div>
           </div>
@@ -1296,7 +1340,7 @@ export default function App() {
                       <button
                          onClick={() => resubmitAuditOrder(activeAuditOrder.id)}
                          disabled={isSaving}
-                         className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-amber-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98]"
+                         className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-amber-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98] disabled:bg-gray-400 disabled:shadow-none disabled:cursor-not-allowed"
                       >
                          {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
                          {isSaving ? 'Submitting...' : 'Resubmit to Cloud'}
@@ -1307,7 +1351,7 @@ export default function App() {
                         <button
                            onClick={() => resubmitAuditOrder(activeAuditOrder.id)}
                            disabled={isSaving}
-                           className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl shadow-lg shadow-gray-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98]"
+                           className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl shadow-lg shadow-gray-200 flex justify-center items-center gap-2 transition-colors active:scale-[0.98] disabled:bg-gray-400 disabled:shadow-none disabled:cursor-not-allowed"
                         >
                            {isSaving ? <CloudUpload className="w-5 h-5 animate-bounce"/> : <CloudUpload className="w-5 h-5"/>}
                            {isSaving ? 'Submitting...' : 'Force Re-sync to Cloud'}
